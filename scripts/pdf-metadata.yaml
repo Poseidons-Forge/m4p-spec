@@ -1,0 +1,47 @@
+# Eisvogel template metadata for the M4P Protocol Specification PDF.
+# https://github.com/Wandmalfarbe/pandoc-latex-template
+
+# --- Title page ---
+title: "M4P Protocol Specification"
+subtitle: "Multi-Modal Maritime Mesh Protocol"
+date: "Version VERSION_PLACEHOLDER  |  Proposal Draft  |  DATE_PLACEHOLDER"
+titlepage: true
+titlepage-color: "1B3A5C"
+titlepage-text-color: "FFFFFF"
+titlepage-rule-color: "FFFFFF"
+titlepage-rule-height: 2
+titlepage-logo: "assets/logo-dark.png"
+logo-width: 200pt
+# --- Table of contents ---
+toc-own-page: true
+toc-title: "Table of Contents"
+
+# --- Headers / footers ---
+# Eisvogel defaults: footer-right=\thepage, footer-left=author (empty).
+# Only override what we need; empty strings are falsy in pandoc templates
+# and trigger eisvogel's defaults, so omit rather than set to "".
+header-left: "M4P Protocol Specification"
+header-right: "vVERSION_PLACEHOLDER — DATE_PLACEHOLDER"
+
+# --- Fonts (available via texlive-xetex + system fonts) ---
+mainfont: "Noto Serif"
+sansfont: "Noto Sans"
+monofont: "DejaVu Sans Mono"
+mainfontoptions:
+  - Scale=1.0
+monofontoptions:
+  - Scale=0.85
+
+# --- Layout ---
+fontsize: "9pt"
+geometry: "left=2.0cm, right=1.5cm, top=1.8cm, bottom=1.8cm"
+tables: true
+book: false
+classoption:
+  - "oneside"
+  - "parskip=half"
+colorlinks: true
+linkcolor: "NavyBlue"
+urlcolor: "NavyBlue"
+table-use-row-colors: true
+code-block-font-size: "\\footnotesize"

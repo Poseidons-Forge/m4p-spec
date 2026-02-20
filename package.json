@@ -1,0 +1,20 @@
+{
+  "name": "proposal",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "render": "node render.js svg",
+    "render:pdf": "node render.js pdf",
+    "render:png": "node render.js png",
+    "pdf": "bash scripts/build-pdf.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "description": "",
+  "dependencies": {
+    "@mermaid-js/layout-elk": "^0.2.0",
+    "@mermaid-js/mermaid-cli": "^11.12.0"
+  }
+}

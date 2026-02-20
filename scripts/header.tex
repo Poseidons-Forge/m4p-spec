@@ -1,0 +1,72 @@
+% header.tex — LaTeX preamble additions for the M4P spec PDF build.
+
+% Unicode fallback (arrows, math symbols missing from Noto Serif)
+\usepackage{newunicodechar}
+\newfontfamily\symbolfallback{DejaVu Serif}
+\newunicodechar{→}{{\symbolfallback →}}
+\newunicodechar{←}{{\symbolfallback ←}}
+\newunicodechar{↔}{{\symbolfallback ↔}}
+\newunicodechar{≥}{{\symbolfallback ≥}}
+\newunicodechar{≤}{{\symbolfallback ≤}}
+\newunicodechar{≠}{{\symbolfallback ≠}}
+\newunicodechar{✓}{{\symbolfallback ✓}}
+
+% Scale images down to fit the text width but never enlarge beyond natural size.
+% Cap height to avoid page overflow.  Center within the text column.
+\usepackage[export]{adjustbox}
+\let\oldincludegraphics\includegraphics
+\renewcommand{\includegraphics}[2][]{\makebox[\linewidth]{\oldincludegraphics[max width=\linewidth,max height=0.7\textheight,keepaspectratio,#1]{#2}}}
+
+% Smaller font in tables for dense technical content.
+% Left-align tables to the text margin (pandoc longtables center by default,
+% which adds visible left padding on shorter tables).
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{etoolbox}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{\fill}
+\AtBeginEnvironment{longtable}{\small\setlength{\tabcolsep}{4pt}}
+
+% Prevent widows and orphans
+\widowpenalty=10000
+\clubpenalty=10000
+
+% Request vertical space before images to keep figure labels with their diagrams
+\usepackage{needspace}
+
+% Force each top-level section to start on a new page.
+% Uses etoolbox \pretocmd to safely prepend \clearpage without breaking
+% the starred form (\section*) used by the TOC.
+\pretocmd{\section}{\clearpage}{}{}
+
+% Centered logo in the page footer.  Eisvogel uses scrlayer-scrpage,
+% which provides \ifoot / \cfoot (not fancyhdr's \lfoot).
+% Load it at end-of-preamble only if eisvogel didn't, then set footers
+% at \begin{document} when everything is ready.
+\makeatletter
+\AtEndPreamble{%
+  \@ifpackageloaded{scrlayer-scrpage}{}{\usepackage{scrlayer-scrpage}}%
+}
+\makeatother
+\AtBeginDocument{%
+  \cfoot{\oldincludegraphics[height=7mm]{assets/logo.png}}%
+  \ifoot{\scriptsize\textcolor{gray}{Poseidon's Forge Proprietary}}%
+}
+
+% Confidentiality notice page — inserted between the title page and TOC.
+\AfterEndEnvironment{titlepage}{%
+  \thispagestyle{empty}%
+  \vspace*{\fill}%
+  \begin{center}
+    \textbf{\large Confidentiality and Limited Distribution Notice}\\[1.5em]
+    \begin{minipage}{0.75\textwidth}
+      \centering
+      The information contained within this document is considered Poseidon's
+      Forge proprietary information. The contents of this document may not be
+      disclosed to third parties without the express written permission of
+      Poseidon's Forge, Inc.\@ Thank you.
+    \end{minipage}
+  \end{center}
+  \vspace*{\fill}%
+  \clearpage
+}

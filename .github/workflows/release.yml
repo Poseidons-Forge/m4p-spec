@@ -1,0 +1,44 @@
+name: Release PDF
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need tags for comparison
+
+      - name: Extract version from spec
+        id: version
+        run: |
+          VER=$(grep -oP '\*\*Version\*\*\s*\|\s*\K[^\s|]+' m4p-spec.md)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build PDF
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          docker build -t m4p-spec-builder .
+          docker run --rm -v "${{ github.workspace }}:/spec" m4p-spec-builder
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "M4P Spec ${{ steps.version.outputs.tag }}"
+          files: m4p-spec.pdf
+          generate_release_notes: true
