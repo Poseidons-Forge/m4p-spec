@@ -1,9 +1,10 @@
 # M4P Protocol Specification
 
-This repository contains the M4P Protocol Specification (`m4p-spec.md`) and a
-build pipeline that renders it as a professionally styled PDF using Pandoc,
-XeLaTeX, and the [Eisvogel](https://github.com/Wandmalfarbe/pandoc-latex-template)
-LaTeX template.
+This repository contains the M4P Protocol Specification split across
+`sections/*.md` and a build pipeline that renders it as a professionally styled
+PDF using Pandoc, XeLaTeX, and the
+[Eisvogel](https://github.com/Wandmalfarbe/pandoc-latex-template) LaTeX
+template.
 
 For the reference implementation, see the [m4p](https://github.com/pschanely/m4p)
 repository.
@@ -45,9 +46,10 @@ npm run pdf      # builds m4p-spec.pdf
 The build script (`scripts/build-pdf.sh`) runs a four-step pipeline:
 
 1. **Render diagrams** -- `render.js` extracts Mermaid blocks from the
-   markdown and renders them as PDF vector images via `mmdc`.
-2. **Preprocess** -- Strips the title block and manual Table of Contents
-   (Eisvogel generates both from YAML metadata).
+   section markdown files and renders them as PDF vector images via `mmdc`.
+2. **Resolve metadata + section order** -- Reads `sections/order.txt`, excludes
+   `00-frontmatter.md` (Eisvogel generates title page + ToC), and injects
+   values from `spec-metadata.yaml` into `scripts/pdf-metadata.yaml`.
 3. **Pandoc + Eisvogel + XeLaTeX** -- Converts the processed markdown into
    a styled PDF. Configuration lives in `scripts/pdf-metadata.yaml` and
    `scripts/header.tex`.
@@ -60,7 +62,9 @@ cached in `scripts/.cache/`.
 
 | File | Purpose |
 |---|---|
-| `m4p-spec.md` | The specification source (Markdown) |
+| `sections/*.md` | Specification source split by section |
+| `sections/order.txt` | Explicit section ordering for render/build |
+| `spec-metadata.yaml` | Canonical version/status/date values |
 | `render.js` | Mermaid diagram extractor and renderer |
 | `package.json` | npm dependencies (mermaid-cli, layout-elk) |
 | `Dockerfile` | Reproducible PDF build environment |

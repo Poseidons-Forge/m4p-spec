@@ -18,7 +18,27 @@ jobs:
       - name: Extract version from spec
         id: version
         run: |
-          VER=$(grep -oP '\*\*Version\*\*\s*\|\s*\K[^\s|]+' m4p-spec.md)
+          VER=$(awk '
+            /^[[:space:]]*version[[:space:]]*:/ {
+              val = $0
+              sub(/^[[:space:]]*version[[:space:]]*:[[:space:]]*/, "", val)
+              sub(/[[:space:]]*#.*/, "", val)
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+
+              first = substr(val, 1, 1)
+              last = substr(val, length(val), 1)
+              if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+                val = substr(val, 2, length(val) - 2)
+              }
+
+              print val
+              exit
+            }
+          ' spec-metadata.yaml)
+          if [ -z "$VER" ]; then
+            echo "Failed to parse 'version' from spec-metadata.yaml" >&2
+            exit 1
+          fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "tag=v$VER" >> "$GITHUB_OUTPUT"
 

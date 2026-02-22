@@ -4,7 +4,7 @@
 #
 # Pipeline:
 #   1. Render mermaid diagrams to PDF vector images  (render.js + mmdc)
-#   2. Preprocess rendered markdown  (strip manual TOC / title block)
+#   2. Resolve metadata + ordered section inputs
 #   3. pandoc  +  eisvogel template  +  xelatex  →  final PDF
 #
 # Usage:
@@ -20,11 +20,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RENDERED_DIR="$PROJECT_DIR/rendered"
+SECTION_DIR="$PROJECT_DIR/sections"
+SECTION_ORDER="$SECTION_DIR/order.txt"
 CACHE_DIR="$SCRIPT_DIR/.cache"
 TEMPLATE="$CACHE_DIR/eisvogel.latex"
 METADATA="$SCRIPT_DIR/pdf-metadata.yaml"
+SPEC_METADATA="$PROJECT_DIR/spec-metadata.yaml"
 OUTPUT="$PROJECT_DIR/m4p-spec.pdf"
-INPUT_MD="m4p-spec.md"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -33,6 +35,32 @@ step() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
 ok()   { printf '    \033[0;32m%s\033[0m\n' "$1"; }
 die()  { printf '\033[0;31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
 
+extract_spec_metadata() {
+    local key="$1"
+    local value
+
+    value=$(awk -v key="$key" '
+        $0 ~ "^[[:space:]]*" key "[[:space:]]*:" {
+            val = $0
+            sub("^[[:space:]]*" key "[[:space:]]*:[[:space:]]*", "", val)
+            sub(/[[:space:]]*#.*/, "", val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+
+            first = substr(val, 1, 1)
+            last = substr(val, length(val), 1)
+            if ((first == "\"" && last == "\"") || (first == "'"'"'" && last == "'"'"'")) {
+                val = substr(val, 2, length(val) - 2)
+            }
+
+            print val
+            exit
+        }
+    ' "$SPEC_METADATA")
+
+    [ -n "$value" ] || die "Missing or empty '$key' in $SPEC_METADATA"
+    printf '%s' "$value"
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------------
@@ -40,7 +68,10 @@ for cmd in node pandoc xelatex; do
     command -v "$cmd" >/dev/null || die "$cmd is required but not found"
 done
 [ -f "$PROJECT_DIR/render.js" ] || die "render.js not found in $PROJECT_DIR"
+[ -d "$SECTION_DIR" ]          || die "sections directory not found in $PROJECT_DIR"
+[ -f "$SECTION_ORDER" ]        || die "sections/order.txt not found in $SECTION_DIR"
 [ -f "$METADATA" ]             || die "pdf-metadata.yaml not found in $SCRIPT_DIR"
+[ -f "$SPEC_METADATA" ]        || die "spec-metadata.yaml not found in $PROJECT_DIR"
 
 # ---------------------------------------------------------------------------
 # Step 1  —  Render mermaid diagrams to PDF (vector)
@@ -67,28 +98,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3  —  Preprocess markdown
+# Step 3  —  Resolve metadata and ordered section inputs
 # ---------------------------------------------------------------------------
-step "Preparing markdown for pandoc..."
-PREPARED="$RENDERED_DIR/.prepared.md"
+step "Preparing metadata and section inputs for pandoc..."
 
-# The source has:  # Title  /  ## Subtitle  /  metadata table  /  manual TOC
-# Eisvogel generates a title page + auto-TOC from YAML metadata, so we strip
-# everything before the first real content section.
-sed -n '/^## 1\. Introduction/,$p' "$RENDERED_DIR/$INPUT_MD" > "$PREPARED"
-ok "stripped title block and manual TOC"
+mapfile -t ORDERED_SECTIONS < <(grep -vE '^[[:space:]]*($|#)' "$SECTION_ORDER")
+[ "${#ORDERED_SECTIONS[@]}" -gt 0 ] || die "No sections listed in $SECTION_ORDER"
 
-# Extract version and date from the markdown metadata table so the PDF title
-# page and headers stay in sync with the source document.
-SPEC_VERSION=$(grep -oP '\*\*Version\*\*\s*\|\s*\K[^\s|]+' "$RENDERED_DIR/$INPUT_MD" || echo "0.0")
-SPEC_DATE=$(grep -oP '\*\*Date\*\*\s*\|\s*\K[^\s|]+' "$RENDERED_DIR/$INPUT_MD" || echo "unknown")
+PANDOC_INPUTS=()
+for section_file in "${ORDERED_SECTIONS[@]}"; do
+    rendered_section="$RENDERED_DIR/sections/$section_file"
+    [ -f "$rendered_section" ] || die "Rendered section missing: $rendered_section"
+
+    # 00-frontmatter.md contains the source title block + manual TOC, which
+    # Eisvogel regenerates from metadata and --toc.
+    if [ "$section_file" != "00-frontmatter.md" ]; then
+        PANDOC_INPUTS+=("sections/$section_file")
+    fi
+done
+[ "${#PANDOC_INPUTS[@]}" -gt 0 ] || die "No content sections selected for pandoc"
+ok "${#PANDOC_INPUTS[@]} section file(s) selected"
+
+# Extract version/status/date from dedicated spec metadata.
+SPEC_VERSION=$(extract_spec_metadata version)
+SPEC_STATUS=$(extract_spec_metadata status)
+SPEC_DATE=$(extract_spec_metadata date)
 
 # Build a resolved copy of the metadata YAML with placeholders replaced.
 RESOLVED_METADATA="$RENDERED_DIR/.pdf-metadata.yaml"
 sed -e "s/VERSION_PLACEHOLDER/$SPEC_VERSION/g" \
+    -e "s/STATUS_PLACEHOLDER/$SPEC_STATUS/g" \
     -e "s/DATE_PLACEHOLDER/$SPEC_DATE/g" \
     "$METADATA" > "$RESOLVED_METADATA"
-ok "version $SPEC_VERSION, date $SPEC_DATE from source markdown"
+ok "version $SPEC_VERSION, status $SPEC_STATUS, date $SPEC_DATE from spec metadata"
 
 # Symlink assets into rendered/ so logo paths resolve during xelatex build.
 # Also create a space-free symlink for the logo (LaTeX chokes on spaces).
@@ -106,8 +148,9 @@ LUA_FILTER="$SCRIPT_DIR/needspace-images.lua"
 LUA_TABLE_WIDTHS="$SCRIPT_DIR/table-widths.lua"
 LUA_KEEP_TOGETHER="$SCRIPT_DIR/keep-together.lua"
 LUA_NO_REPEAT_HDR="$SCRIPT_DIR/no-repeat-header.lua"
-(cd "$RENDERED_DIR" && pandoc ".prepared.md" \
+(cd "$RENDERED_DIR" && pandoc "${PANDOC_INPUTS[@]}" \
     --from markdown-implicit_figures \
+    --resource-path="$RENDERED_DIR:$RENDERED_DIR/sections" \
     --metadata-file="$RESOLVED_METADATA" \
     --template="$TEMPLATE" \
     --include-in-header="$HEADER_TEX" \
@@ -126,7 +169,7 @@ LUA_NO_REPEAT_HDR="$SCRIPT_DIR/no-repeat-header.lua"
 # ---------------------------------------------------------------------------
 # Cleanup & report
 # ---------------------------------------------------------------------------
-rm -f "$PREPARED" "$RESOLVED_METADATA"
+rm -f "$RESOLVED_METADATA"
 
 if [ -f "$OUTPUT" ]; then
     SIZE=$(du -h "$OUTPUT" | cut -f1)
