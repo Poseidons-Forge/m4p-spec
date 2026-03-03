@@ -95,7 +95,7 @@ All fragments — whether produced by the originating node or by intermediate no
 
 #### 8.3.4 Independent Forwarding
 
-Intermediate nodes MUST forward fragments individually as they are received. Nodes MUST NOT suppress or delay forwarding of a fragment because other fragments of the same message have not yet been received.
+Intermediate nodes MUST treat each fragment as independently forwardable as soon as it is received. Implementations MAY enqueue/store fragments and forward them on normal transmission opportunities, but nodes MUST NOT suppress or delay forwarding of a fragment because other fragments of the same message have not yet been received.
 
 #### 8.3.5 Encryption Interaction
 
