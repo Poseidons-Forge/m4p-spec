@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 6. Message Instance Tracking and Deduplication {#6-message-instance-tracking-and-deduplication}
 **[WIRE FORMAT + BEHAVIORAL]**
 
@@ -94,4 +108,3 @@ Given this invariant, the composite key `(request_MIID, message_type_id, source_
 > [GUIDANCE] On memory-constrained nodes, the deduplication cache MAY implement bounded storage with least-recently-seen eviction. If a cache entry is evicted before its TTL expires, the node may fail to suppress a late-arriving duplicate. Implementations SHOULD size the cache to accommodate the expected traffic volume within the maximum configured TTL. In practice, the bandwidth constraints of maritime links limit the achievable message rate to well below the theoretical MIID capacity.
 
 ---
-

@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## Appendix C: Application Integration Guidelines (Non-Normative) {#appendix-c-application-integration-guidelines-non-normative}
 
 This appendix provides guidance for application developers on message payload design and effective use of M4P. The recommendations here are non-normative — they represent best practices but are not required for protocol conformance.
@@ -41,4 +55,3 @@ The M4P protocol is uninvolved in steps 3–5. The transport layer continues to 
 **What M4P does not provide.** M4P does not guarantee that all nodes will converge on the same TDMA schedule simultaneously. Schedule convergence depends on NC message propagation latency and the application's adaptation logic. During the transition period, some nodes may operate with the old schedule while others have updated. This is acceptable because M4P's transport layer is schedule-agnostic — it sends when the adapter offers an opportunity, regardless of the underlying MAC state. Temporary schedule inconsistency may reduce acoustic throughput but does not cause protocol-level failures.
 
 ---
-

@@ -84,3 +84,13 @@ cached in `scripts/.cache/`.
 - **Eisvogel re-download**: Delete `scripts/.cache/` and re-run.
 - **Mermaid failures**: Check that `npx mmdc --version` works. If Puppeteer/
   Chromium errors occur, try `PUPPETEER_ARGS='--no-sandbox' npm run pdf`.
+
+## License
+
+The specification is licensed under CC BY 4.0.
+
+SPDX identifier: `CC-BY-4.0`
+
+[![License: CC BY 4.0](https://licensebuttons.net/l/by/4.0/88x31.png)](https://creativecommons.org/licenses/by/4.0/)
+
+This specification is licensed under the Creative Commons Attribution 4.0 International License. You are free to share and adapt this material for any purpose, including commercial, provided you give appropriate credit to Poseidon's Forge, Inc. and indicate if changes were made. Note that the 'M4P' and 'Maritime Multi-Modal Mesh Protocol' names are unregistered trademarks of Poseidon's Forge, Inc. -- modified versions of this specification may not use these names to imply official status or endorsement without written permission. This license applies to the specification documents only -- the software implementation is licensed separately under the Apache License 2.0.

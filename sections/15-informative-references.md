@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 15. Informative References {#15-informative-references}
 
 The following documents are referenced for background and context. They are not required for implementation.
@@ -13,4 +27,3 @@ The following documents are referenced for background and context. They are not 
 - **[SP800-108r1]** Chen, L., "Recommendation for Key Derivation Using Pseudorandom Functions", NIST Special Publication 800-108 Revision 1, August 2022. Alternative KDF referenced in [Section 12.4.1](#1241-payload-cipher-key) guidance.
 
 ---
-

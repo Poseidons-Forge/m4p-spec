@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 9. Transport Behavior {#9-transport-behavior}
 
 **[BEHAVIORAL + GUIDANCE]**
@@ -486,4 +500,3 @@ The following invariants apply:
 When dispersion-aware scheduling is enabled, Request resend backoff MAY be integrated as a continuous scoring/selection decay rather than a binary eligibility gate, provided the base rate-limiting intent of [Section 9.3.1](#931-request-resend) is preserved.
 
 ---
-

@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 3. Identity and Addressing Model {#3-identity-and-addressing-model}
 **[WIRE FORMAT]**
 
@@ -96,4 +110,3 @@ flowchart TD
 Decentralized addressing comes from deterministic derivation: each node computes addresses from UID and `network_id` ([Section 11.1](#111-address-derivation-and-versioning)), so no central allocator is required. The UID/address split complements this by keeping persistent identity separate from mission-scoped on-wire addresses. UIDs also anchor conflict resolution and stale-mapping handling ([Section 11.8](#118-conflict-detection-and-resolution)). Keeping CAs in packet headers and NAs in transmission/NC metadata preserves wire compactness while supporting per-node forwarding state.
 
 ---
-

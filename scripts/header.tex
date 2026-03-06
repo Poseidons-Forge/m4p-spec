@@ -50,21 +50,26 @@
 \makeatother
 \AtBeginDocument{%
   \cfoot{\oldincludegraphics[height=7mm]{assets/logo.png}}%
-  \ifoot{\scriptsize\textcolor{gray}{Poseidon's Forge Proprietary}}%
 }
 
-% Confidentiality notice page — inserted between the title page and TOC.
+% License notice page — inserted between the title page and TOC.
 \AfterEndEnvironment{titlepage}{%
   \thispagestyle{empty}%
   \vspace*{\fill}%
   \begin{center}
-    \textbf{\large Confidentiality and Limited Distribution Notice}\\[1.5em]
+    \textbf{\large Licensing Notice}\\[1.5em]
     \begin{minipage}{0.75\textwidth}
       \centering
-      The information contained within this document is considered Poseidon's
-      Forge proprietary information. The contents of this document may not be
-      disclosed to third parties without the express written permission of
-      Poseidon's Forge, Inc.\@ Thank you.
+      Copyright (c) 2026 Poseidon's Forge, Inc.\@ All rights reserved.\\[1em]
+      This work is licensed under the Creative Commons Attribution 4.0
+      International License (CC BY 4.0). To view a copy of this license,
+      visit https://creativecommons.org/licenses/by/4.0/\\[1em]
+      You are free to share and adapt this material for any purpose,
+      including commercial, provided you give appropriate credit to
+      Poseidon's Forge, Inc.\@ and indicate if changes were made.\\[1em]
+      The ``M4P'' and ``Maritime Multi-Modal Mesh Protocol'' names are
+      unregistered trademarks of Poseidon's Forge, Inc.\@ and may not be used to imply
+      official status or endorsement without written permission.
     \end{minipage}
   \end{center}
   \vspace*{\fill}%

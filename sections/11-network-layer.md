@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 11. Network Layer {#11-network-layer}
 
 **[WIRE FORMAT + BEHAVIORAL]**
@@ -1104,4 +1118,3 @@ sequenceDiagram
 As additional nodes join, the pattern repeats Phase 2: each newcomer's claims are ACKed by one or more existing peers (fast path), and the state request/response exchange provides bulk mapping convergence. When multiple peers exist, ACK suppression ([Section 11.4.1](#1141-confirmation-paths)) and state response jitter suppression ([Section 11.7.2](#1172-nc_network_state_request-32001)) reduce redundant transmissions.
 
 ---
-

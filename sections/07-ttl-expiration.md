@@ -1,3 +1,17 @@
+<!--
+Copyright (c) 2026 Poseidon's Forge, Inc. All rights reserved.
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share (copy and redistribute) and adapt (remix, transform,
+and build upon) this material in any medium or format for any purpose,
+including commercial, under the following terms:
+- Attribution: You must give appropriate credit to Poseidon's Forge, Inc.,
+  provide a link to the license, and indicate if changes were made.
+-->
+
 ## 7. Time-to-Live and Packet Expiration {#7-time-to-live-and-packet-expiration}
 **[WIRE FORMAT + BEHAVIORAL]**
 
@@ -27,4 +41,3 @@ Where `calculate_packet_age` uses the modular arithmetic defined in [Section 5.6
 Status and Event differ in retention semantics while sharing the same expiration rules: Status entries are latest-value by variant, while Event messages are retained as independent message instances until expiration.
 
 ---
-

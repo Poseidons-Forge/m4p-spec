@@ -9,6 +9,7 @@
 #
 # Usage:
 #   ./scripts/build-pdf.sh          # from repo root
+#   ./scripts/build-pdf.sh --skip-figures
 #   npm run pdf                     # via npm
 #
 # Prerequisites:
@@ -34,6 +35,33 @@ OUTPUT="$PROJECT_DIR/m4p-spec.pdf"
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
 ok()   { printf '    \033[0;32m%s\033[0m\n' "$1"; }
 die()  { printf '\033[0;31mERROR: %s\033[0m\n' "$1" >&2; exit 1; }
+
+usage() {
+    cat <<EOF
+Usage: ./scripts/build-pdf.sh [--skip-figures]
+
+Options:
+  --skip-figures   Reuse existing rendered diagrams/markdown under rendered/
+                   and skip running render.js.
+EOF
+}
+
+SKIP_FIGURES=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --skip-figures)
+            SKIP_FIGURES=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "Unknown argument: $1"
+            ;;
+    esac
+    shift
+done
 
 extract_spec_metadata() {
     local key="$1"
@@ -76,10 +104,16 @@ done
 # ---------------------------------------------------------------------------
 # Step 1  —  Render mermaid diagrams to PDF (vector)
 # ---------------------------------------------------------------------------
-step "Rendering mermaid diagrams to PDF..."
-(cd "$PROJECT_DIR" && node render.js pdf)
-NDIAG=$(find "$RENDERED_DIR" -maxdepth 1 -name 'figure-*.pdf' 2>/dev/null | wc -l)
-ok "$NDIAG diagram(s) rendered"
+if [ "$SKIP_FIGURES" -eq 1 ]; then
+    step "Skipping mermaid diagram rendering (--skip-figures)..."
+    [ -d "$RENDERED_DIR/sections" ] || die "rendered/sections not found; run without --skip-figures first"
+    ok "using existing rendered artifacts"
+else
+    step "Rendering mermaid diagrams to PDF..."
+    (cd "$PROJECT_DIR" && node render.js pdf)
+    NDIAG=$(find "$RENDERED_DIR" -maxdepth 1 -name 'figure-*.pdf' 2>/dev/null | wc -l)
+    ok "$NDIAG diagram(s) rendered"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 2  —  Download eisvogel template (cached)
