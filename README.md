@@ -45,6 +45,10 @@ Applications interact through four message classes: **Status** (periodic telemet
 
 To build the PDF yourself, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Feedback
+
+We welcome feedback on the specification. Please join the discussion on the [OceanSoft Forum](https://forum.oceansoft.org/t/introducing-m4p-an-open-protocol-for-delay-tolerant-maritime-mesh-networking/46).
+
 ## Related Projects
 
 An open-source reference implementation of the M4P middleware is under active development and will be released soon, including DataLink adapters and Rust and Python SDKs.
