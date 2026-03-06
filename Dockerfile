@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcairo2 libxdamage1 libxrandr2 libxcomposite1 libxshmfence1 libxfixes3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Update TeX Live manager to match the remote repository, then install packages
-RUN tlmgr update --self && tlmgr install newunicodechar
+# Pin TeX Live to the frozen 2025 repository (the rolling repo has moved to 2026)
+RUN tlmgr option repository https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/tlnet-final \
+    && tlmgr install newunicodechar
 
 # Install npm deps to /opt/node_modules so they survive the volume mount.
 # render.js resolves mmdc via __dirname/node_modules, so we symlink back.
