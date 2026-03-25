@@ -31,7 +31,7 @@ The adapter also delivers received transmissions to the transport for processing
 
 All modality-specific mechanics — waveform selection, duty-cycle management, MAC protocol behavior, TDMA scheduling, modem command interfaces, and physical-layer configuration — remain encapsulated within the DataLink adapter. The M4P transport layer MUST NOT depend on any modality-specific behavior beyond the transmission opportunity and payload budget interface.
 
-**Boundary asymmetry.** The DataLink abstraction is intentionally asymmetric with respect to fleet-wide topology. The transport does not push fleet membership information — which peers exist on the network, when nodes join or depart, fleet size — down to DataLink adapters. Adaptive data link behaviors that depend on fleet composition (such as TDMA slot allocation and contention window sizing) are deployment-specific and are managed by the application layer (see [Section 10.4](#104-data-link-adaptation)).
+**Boundary asymmetry.** The DataLink abstraction is intentionally asymmetric with respect to fleet-wide topology. For most links, the transport does not push fleet membership information — which peers exist on the network, when nodes join or depart, fleet size — down to DataLink adapters. The exception is links that opt into M4P-managed TDMA ([Section 11.10](#1110-tdma-slot-allocation)): the protocol computes TDMA slot assignments from network state and pushes schedule parameters to the link via an implementation-specific interface. For all other links, adaptive data link behaviors that depend on fleet composition are deployment-specific and are managed by the application layer (see [Section 10.4](#104-data-link-adaptation)).
 
 **[GUIDANCE] Extended adapter interface.** The two-signal interface (transmission opportunity, payload budget) is the required contract. Adapters MAY additionally provide link quality or congestion metrics that the transport can use for scheduling and priority decisions. Implementations will typically expose richer scheduling metadata (timing constraints, rate characteristics, capability declarations) and may support modality-specific delivery optimizations (such as targeted delivery to a known peer's link-layer address on IP-based modalities). These implementation choices do not affect interoperability — the on-wire format of Transmissions is identical regardless of the adapter's internal interface. An adapter that provides only the required interface is fully conformant; the transport MUST function correctly without extended metadata.
 
@@ -87,9 +87,25 @@ Evidence-plane metadata ([Section 10.5](#105-scheduling-inputs)), when provided 
 
 ### 10.4 Data Link Adaptation
 
-Adaptive data link behaviors — such as TDMA slot allocation, contention window sizing, MAC schedule adjustment in response to fleet size changes, and transmission power management — vary significantly across modem hardware, fleet compositions, mission profiles, and operational phases. These behaviors cannot be generalized into a modality-agnostic protocol without coupling the protocol to specific hardware and operational scenarios. They are outside the scope of M4P and are managed by the application or autonomy layer.
+Each DataLink adapter manages its own MAC (Medium Access Control) scheduling by default — calling `report_ready(budget_bytes)` whenever it determines a transmission opportunity exists. M4P's transport layer is MAC-agnostic: it sends when the adapter offers an opportunity, regardless of the underlying scheduling mechanism (TDMA, CSMA, proprietary, or unscheduled).
 
-The expected integration pattern for deployments that require adaptive data link behavior is:
+M4P provides one opt-in exception to this separation: **M4P-managed TDMA**. Links that opt in receive TDMA slot assignments computed by the protocol from network state, using the same distributed coordination mechanisms as address assignment. Links that do not opt in continue to manage their own MAC protocol as before.
+
+#### 10.4.1 MAC Management Modes
+
+Each link operates in one of two MAC management modes:
+
+- **Link-managed MAC** (default): The link manages its own scheduling. M4P does not push any MAC parameters to the link. The link calls `report_ready()` whenever it determines a transmission opportunity exists. This covers all MAC protocols: TDMA managed by the adapter, CSMA, listen-before-talk, proprietary scheduling, or no scheduling at all.
+
+- **M4P-managed TDMA**: The protocol computes TDMA slot assignments from network state (using the NC_TDMA_JOIN / NC_TDMA_SCHEDULE protocol defined in [Section 11.10](#1110-tdma-slot-allocation)) and pushes schedule parameters to the link via an implementation-specific interface. The link uses these parameters to determine its `report_ready()` timing. The transport layer is unaffected — it continues to see transmission opportunities and payload budgets through the standard DataLink interface.
+
+MAC management mode is configured per-link, not per-modality. Two links on the same modality (e.g., two acoustic modems on different frequencies) MAY have different MAC management modes.
+
+#### 10.4.2 Application-Managed Adaptation (Link-Managed MAC)
+
+For links using link-managed MAC, adaptive data link behaviors — such as TDMA slot allocation, MAC contention window sizing, MAC schedule adjustment in response to fleet size changes, and transmission power management — are the responsibility of the application or autonomy layer. These behaviors vary significantly across modem hardware, fleet compositions, mission profiles, and operational phases.
+
+The expected integration pattern is:
 
 1. **M4P provides network awareness.** The NC discovery mechanisms (NC_NODE_SUMMARY/NC_CLAIM_RENEWAL, address claims, claim expiration — see [Section 11.9](#119-peer-discovery-and-fleet-membership)) provide the application with current fleet membership: which nodes are present, when new nodes join, and when nodes depart (via claim expiration). Applications access this information through the implementation's peer registry interface.
 
@@ -97,15 +113,15 @@ The expected integration pattern for deployments that require adaptive data link
 
 3. **The application configures the adapter.** The application issues configuration commands to the DataLink adapter through the adapter's modality-specific interface (e.g., modem command protocol, adapter API). The adapter adjusts its behavior accordingly. M4P's transport layer is unaffected — it continues to receive transmission opportunities and payload budgets through the standard interface.
 
-See [Appendix C](#appendix-c-application-integration-guidelines-non-normative) for a concrete TDMA adaptation example.
+See [Appendix C](#appendix-c-application-integration-guidelines-non-normative) for concrete examples of both M4P-managed TDMA and application-managed adaptation.
 
-[GUIDANCE] Common data link adaptation scenarios include:
-
-- **TDMA slot allocation.** When M4P's peer registry indicates a new node has joined (via NC_NODE_SUMMARY), the application MAY reconfigure the acoustic adapter's TDMA schedule to allocate a slot for the new node. When a node's claim expires (indicating departure), the application MAY reclaim the slot. The specific slot assignment algorithm is deployment-specific and depends on the modem's TDMA capabilities.
+[GUIDANCE] Common application-managed adaptation scenarios include:
 
 - **Contention-based MAC tuning.** For modems using contention-based MAC (e.g., CSMA-style protocols), the application MAY adjust contention window parameters based on the number of active peers known to M4P's peer registry. Larger fleets benefit from wider contention windows to reduce collision probability.
 
 - **Pre-provisioned schedules.** Deployments with known fleet composition at launch time (the common case for planned operations — see [Section 11.7.3](#1173-nc_network_state_response-32002) guidance on initial network state provisioning) SHOULD pre-configure data link schedules alongside M4P network parameters. Runtime adaptation then serves as a correction mechanism for unplanned topology changes, not the primary configuration path.
+
+- **Custom TDMA.** Deployments with domain-specific MAC requirements that M4P's TDMA model does not fit (hardware-managed TDMA, proprietary scheduling, multi-frequency coordination) SHOULD use link-managed MAC with the application-driven adaptation pattern above.
 
 **Note:** The full DataLink adapter API design — including configuration interfaces, state machines, event models, and modem command protocols — is implementation-specific and outside the scope of this protocol specification.
 

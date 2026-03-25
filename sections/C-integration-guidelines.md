@@ -40,18 +40,25 @@ Application message payloads SHOULD be designed with the following principles:
 
 ### C.2 Data Link Integration
 
-Adaptive data link behaviors are the application's responsibility (see [Section 10.4](#104-data-link-adaptation)).
+M4P offers two approaches for TDMA scheduling on constrained links (see [Section 10.4](#104-data-link-adaptation)):
 
-**Example: Acoustic TDMA adaptation.** Consider a deployment using acoustic modems with configurable TDMA scheduling. On startup, the application pre-provisions the TDMA schedule based on the expected fleet composition (matching the M4P network state obtained via NC_NETWORK_STATE_REQUEST/RESPONSE per [Section 11.7.3](#1173-nc_network_state_response-32002) guidance). During operation:
+**M4P-managed TDMA.** The protocol handles TDMA slot allocation automatically using the distributed coordination mechanisms defined in [Section 11.10](#1110-tdma-slot-allocation). Example join sequence:
+
+1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and obtains a CONFIRMED address.
+2. The AUV broadcasts NC_TDMA_JOIN for its acoustic modality on all available links.
+3. Existing peers receive the join, add the new node to the participant list, and the designated responder broadcasts NC_TDMA_SCHEDULE.
+4. All nodes (including the newcomer) compute deterministic slot assignments from the participant list and push updated schedules to their acoustic adapters.
+
+No application logic is needed for TDMA coordination. The transport layer continues to see transmission opportunities through the standard DataLink interface.
+
+**Application-managed TDMA (link-managed MAC).** For deployments with domain-specific MAC requirements, hardware-managed TDMA, or proprietary scheduling, the application manages TDMA directly using M4P's peer registry for fleet awareness:
 
 1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and NC_NODE_SUMMARY.
-2. Each existing node's M4P network layer receives the summary and updates its peer registry.
-3. Each existing node's application observes the new peer in the registry.
-4. Each application reconfigures its local acoustic adapter's TDMA schedule to include a slot for the new node, using the adapter's modem-specific command interface.
-5. The new node's application similarly configures its acoustic adapter based on the fleet state it learns from NC_NETWORK_STATE_RESPONSE broadcasts or accumulated NC_NODE_SUMMARY broadcasts.
+2. Each existing node's application observes the new peer in the peer registry.
+3. Each application reconfigures its local acoustic adapter's TDMA schedule to include a slot for the new node, using the adapter's modem-specific command interface.
 
-The M4P protocol is uninvolved in steps 3–5. The transport layer continues to receive transmission opportunities from the adapter and build transmissions — it does not know or care that the TDMA schedule changed. This separation means the same M4P transport code works with TDMA modems, CSMA modems, unscheduled modems, or any future MAC protocol, with only the application-layer integration logic changing.
+M4P is uninvolved in scheduling decisions. The transport layer continues to receive transmission opportunities from the adapter regardless of the underlying MAC state.
 
-**What M4P does not provide.** M4P does not guarantee that all nodes will converge on the same TDMA schedule simultaneously. Schedule convergence depends on NC message propagation latency and the application's adaptation logic. During the transition period, some nodes may operate with the old schedule while others have updated. This is acceptable because M4P's transport layer is schedule-agnostic — it sends when the adapter offers an opportunity, regardless of the underlying MAC state. Temporary schedule inconsistency may reduce acoustic throughput but does not cause protocol-level failures.
+**Convergence note.** Under both modes, temporary schedule inconsistency during transitions is acceptable. M4P's transport layer is schedule-agnostic — it sends when the adapter offers an opportunity. Temporary inconsistency may reduce throughput but does not cause protocol-level failures.
 
 ---

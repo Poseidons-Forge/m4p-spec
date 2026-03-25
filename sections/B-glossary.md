@@ -16,6 +16,7 @@ including commercial, under the following terms:
 
 | Term | Definition |
 |---|---|
+| **Address Contention Window** | A timeout period during the address claim lifecycle ([Section 11.4.1](#1141-confirmation-paths)). If no ACK is received within this window, the claim auto-confirms. Distinct from the TDMA contention window. |
 | **AUTH_TAG_SIZE** | A 2-bit flag field (bits [7:6] for Status/Event/Request, bits [6:5] for Response) that controls the presence and size of the AES-CMAC authentication tag: `00` = no tag, `01` = 4 bytes, `10` = 8 bytes, `11` = 16 bytes. See [Section 12.2.3](#1223-authentication-tag) for details. |
 | **Broadcast** | A packet with `destination = 0`, intended for all reachable nodes and clients. |
 | **Client** | An application-layer endpoint that originates or consumes Messages. Identified globally by a ClientUID and locally by a Client Address (CA). |
@@ -28,6 +29,7 @@ including commercial, under the following terms:
 | **Message** | An application-layer unit (status update, event, command, query, response) produced or consumed by a Client. Directed messages (Request/Response) specify their destination by ClientUID; the transport layer resolves to an on-wire Client Address internally. |
 | **Message Instance ID (MIID)** | A unique identifier derived from packet header fields, used for deduplication and request/response correlation. |
 | **Message Type ID** | An unsigned integer classifying the packet payload and determining its transport semantics (Status `0-7,999`, Event `8,000-9,999`, Request/Response `10,000-31,998`, or Network Control `32,000-32,767`). |
+| **M4P-managed TDMA** | An opt-in MAC management mode where the M4P protocol computes TDMA slot assignments from network state and pushes schedule parameters to the link. See [Section 11.10](#1110-tdma-slot-allocation). |
 | **Modality** | A class of data link (acoustic, radio, satellite, LAN, IP/MQTT). |
 | **Network Control** | Reserved message types (32,000-32,767) used for transport-internal and network layer coordination. Not delivered to application clients. |
 | **Node** | A physical participant in the M4P network. Runs the M4P transport, hosts zero or more Clients, and connects to one or more DataLinks. Identified globally by a NodeUID and locally by a Node Address (NA). |
@@ -39,6 +41,8 @@ including commercial, under the following terms:
 | **Response** | A directed application message class sent to answer a Request. Carries the corresponding `request_MIID` for correlation and is retained per response instance subject to TTL and resend policy. |
 | **Status** | A broadcast application message class for current-state snapshots ("what is true now"). Status values supersede older values per `(source CA, message_type_id, status_key)` variant. |
 | **Store-carry-forward (SCF)** | The delay-tolerant forwarding model where nodes store packets locally and forward them opportunistically when link opportunities arise. |
+| **TDMA Contention Window** | A time region at the start of each TDMA cycle where nodes without assigned slots may transmit using random access. Distinct from the address contention window. See [Section 11.10.3](#11103-cycle-geometry). |
+| **TDMA Cycle** | A fixed-length time period aligned to an epoch (0 UTC), containing an optional TDMA contention window followed by TDMA slot time. See [Section 11.10.3](#11103-cycle-geometry). |
 | **Transmission** | One send operation on a specific data link modality, carrying one or more serialized Packets plus transmission metadata. |
 | **TTL (Time-to-Live)** | The maximum duration a packet remains valid in the network. Expired packets are discarded and not forwarded. |
 
