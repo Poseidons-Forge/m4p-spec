@@ -40,25 +40,24 @@ Application message payloads SHOULD be designed with the following principles:
 
 ### C.2 Data Link Integration
 
-M4P offers two approaches for TDMA scheduling on constrained links (see [Section 10.4](#104-data-link-adaptation)):
+Data-link adaptation follows the two-mode model in [Section 10.4](#104-data-link-adaptation): link-managed MAC and M4P-managed TDMA.
 
-**M4P-managed TDMA.** The protocol handles TDMA slot allocation automatically using the distributed coordination mechanisms defined in [Section 11.10](#1110-tdma-slot-allocation). Example join sequence:
-
-1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and obtains a CONFIRMED address.
-2. The AUV broadcasts NC_TDMA_JOIN for its acoustic modality on all available links.
-3. Existing peers receive the join, add the new node to the participant list, and the designated responder broadcasts NC_TDMA_SCHEDULE.
-4. All nodes (including the newcomer) compute deterministic slot assignments from the participant list and push updated schedules to their acoustic adapters.
-
-No application logic is needed for TDMA coordination. The transport layer continues to see transmission opportunities through the standard DataLink interface.
-
-**Application-managed TDMA (link-managed MAC).** For deployments with domain-specific MAC requirements, hardware-managed TDMA, or proprietary scheduling, the application manages TDMA directly using M4P's peer registry for fleet awareness:
+**Link-managed integration pattern.** The application (or autonomy stack) remains responsible for modem-specific MAC policy in link-managed mode. Typical actions include selecting contention parameters, power profiles, and local TDMA tables through modem-specific control interfaces. M4P remains schedule-agnostic in this mode and consumes only transmission opportunities and budgets from the adapter. Example sequence:
 
 1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and NC_NODE_SUMMARY.
 2. Each existing node's application observes the new peer in the peer registry.
 3. Each application reconfigures its local acoustic adapter's TDMA schedule to include a slot for the new node, using the adapter's modem-specific command interface.
 
-M4P is uninvolved in scheduling decisions. The transport layer continues to receive transmission opportunities from the adapter regardless of the underlying MAC state.
+M4P is uninvolved in scheduling decisions. The transport layer receives transmission opportunities from the adapter regardless of the underlying MAC state.
 
-**Convergence note.** Under both modes, temporary schedule inconsistency during transitions is acceptable. M4P's transport layer is schedule-agnostic — it sends when the adapter offers an opportunity. Temporary inconsistency may reduce throughput but does not cause protocol-level failures.
+**M4P-managed TDMA integration pattern.** In M4P-managed mode, participant convergence and slot assignment are protocol behaviors (NC_TDMA_JOIN, NC_TDMA_SCHEDULE, and the [Section 11.7.18.1](#117181-slot-assignment-algorithm) algorithm). Applications provide baseline timing configuration and operational policy; the M4P runtime derives slot ownership from converged network state and paces send opportunities accordingly. No application logic is needed for TDMA coordination. Example join sequence:
+
+1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and obtains a CONFIRMED address.
+2. The AUV broadcasts NC_TDMA_JOIN for its acoustic modality on all available links.
+3. Existing peers receive the join, add the new node to the participant list, and the designated responder broadcasts NC_TDMA_SCHEDULE.
+4. All nodes (including the newcomer) compute deterministic slot assignments from the participant list and push updated schedules to their acoustic adapters.
+5. On subsequent join/departure events, schedule convergence updates slot ownership without requiring application-level slot-table rewrites.
+
+**What remains application-specific.** M4P does not choose mission policy (for example, which links use link-managed vs M4P-managed mode, how conservative contention timing should be, or which modem-level knobs to tune by mission phase). Applications continue to own those decisions. Temporary schedule inconsistency during transitions is acceptable — M4P's transport layer is schedule-agnostic and sends when the adapter offers an opportunity.
 
 ---
