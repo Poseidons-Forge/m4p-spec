@@ -128,7 +128,7 @@ Broadcasting at half-interval provides at least two renewal opportunities per ex
 - **Expiration interval scaling.** For large fleets on severely constrained links, use longer `expiration_interval` values to reduce summary frequency.
 - **Constrained-link fallback.** On modalities where the full NC_NODE_SUMMARY exceeds the payload budget, nodes SHOULD send NC_CLAIM_RENEWAL instead ([Section 11.7.14](#11714-nc_claim_renewal-32004)).
 
-**Sizing reference:** Per-node summary payload is approximately `(13 + L_node + C × (12 + L_client))` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths and `C` is hosted client count.
+**Sizing reference:** Per-node summary payload is approximately `(14 + L_node + C × (12 + L_client) + T)` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths, `C` is hosted client count, and `T` is TDMA modality overhead (`1 + sum(1 + modality_name_len)` bytes; `1` byte when no TDMA modalities are declared).
 
 #### 11.3.3 Lapsed Claim Detection
 
@@ -269,10 +269,10 @@ NC defines three propagation models:
 
 **Announce.** Broadcast + forward at each receiver; MIID deduplication prevents loops.
 
-Specific NC message types may further constrain Announce forwarding by modality — see individual catalog entries in [Section 11.7](#117-nc-message-catalog). In particular, NC_NODE_SUMMARY and NC_CLAIM_RENEWAL suppress mesh forwarding ([Section 11.7.1](#1171-nc_node_summary-32000), [Section 11.7.14](#11714-nc_claim_renewal-32004)), and NC_NETWORK_STATE_REQUEST/RESPONSE suppress all forwarding ([Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)).
+Specific NC message types may further constrain Announce forwarding by modality — see individual catalog entries in [Section 11.7](#117-nc-message-catalog). In particular, NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and NC_TDMA_SCHEDULE suppress mesh forwarding ([Section 11.7.1](#1171-nc_node_summary-32000), [Section 11.7.14](#11714-nc_claim_renewal-32004), [Section 11.7.17](#11717-nc_tdma_join-32030), [Section 11.7.18](#11718-nc_tdma_schedule-32031)), and NC_NETWORK_STATE_REQUEST/RESPONSE suppress all forwarding ([Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)).
 
 - **Header:** NC Announce ([Section 5.5.1](#551-nc-announce-header)).
-- Used by: NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_NETWORK_STATE_REQUEST, NC_NETWORK_STATE_RESPONSE, NC_NODE_ADDRESS_CLAIM, NC_CLIENT_ADDRESS_CLAIM, NC_NODE_ADDRESS_CONFLICT, NC_CLIENT_ADDRESS_CONFLICT.
+- Used by: NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_NETWORK_STATE_REQUEST, NC_NETWORK_STATE_RESPONSE, NC_NODE_ADDRESS_CLAIM, NC_CLIENT_ADDRESS_CLAIM, NC_NODE_ADDRESS_CONFLICT, NC_CLIENT_ADDRESS_CONFLICT, NC_TDMA_JOIN, NC_TDMA_SCHEDULE.
 
 **Query/Response.** Queries propagate like Announce until reaching a resolver (local host state or learned mapping). A resolver:
 
@@ -328,6 +328,8 @@ NC message default priorities are deployment-configurable. The following RECOMME
 | 32,018 | NC_CLIENT_ADDRESS_RESOLVE_ANSWER | Targeted | 160 | Medium — on-demand resolution |
 | 32,020 | NC_NODE_ADDRESS_CONFLICT | Announce | 240 | Critical — stop using wrong address |
 | 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | 240 | Critical — stop using wrong address |
+| 32,030 | NC_TDMA_JOIN | Announce | 200 | High — TDMA participant discovery |
+| 32,031 | NC_TDMA_SCHEDULE | Announce | 200 | High — TDMA schedule convergence |
 
 #### 11.7.1 NC_NODE_SUMMARY (32,000)
 
@@ -365,17 +367,22 @@ NC message default priorities are deployment-configurable. The following RECOMME
 |   client_claim_renewal_ts (u32)                |
 |   client_uid_len       (u8)                    |
 |   client_uid           (client_uid_len B)      |
+| tdma_modality_count    (u8)                    |
+| repeat tdma_modality_count times:              |
+|   tdma_modality_len    (u8)                    |
+|   tdma_modality_name   (tdma_modality_len B)   |
 +-----------------------------------------------+
 ```
 
-**Payload size:** `13 + N + C × (12 + Cᵢ)` bytes (8-bit) | `14 + N + C × (13 + Cᵢ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client.
+**Payload size:** `14 + N + C × (12 + Cᵢ) + sum(1 + Mᵢ)` bytes (8-bit) | `15 + N + C × (13 + Cᵢ) + sum(1 + Mᵢ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client, and Mᵢ = modality-name byte length.
 
 **Receiver behavior:**
 - Apply shared mapping-update handling and update node/client mapping state.
+- After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience.
 
 **Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_NODE_SUMMARY packets on mesh modalities; only the originator broadcasts its own summary. On infrastructure modalities, normal Announce forwarding applies.
 
-This suppression applies to NC_NODE_SUMMARY and NC_CLAIM_RENEWAL. NC_NETWORK_STATE_REQUEST and NC_NETWORK_STATE_RESPONSE suppress all forwarding (see [Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)). Other Announce NC messages remain fully forwarded.
+This suppression applies to NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and NC_TDMA_SCHEDULE. NC_NETWORK_STATE_REQUEST and NC_NETWORK_STATE_RESPONSE suppress all forwarding (see [Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)). Other Announce NC messages (claims, conflicts) remain fully forwarded.
 
 #### 11.7.2 NC_NETWORK_STATE_REQUEST (32,001)
 
@@ -827,6 +834,102 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 **Receiver behavior:**
 - Apply shared mapping-update handling.
 - Resolve pending-address-resolution messages for the resolved ClientUID (see [Section 9.2](#92-per-node-message-store)).
+
+#### 11.7.17 NC_TDMA_JOIN (32,030)
+
+**Purpose:** Announce that a node is participating in M4P-managed TDMA for a named modality.
+
+**Propagation:** Announce.
+
+**When sent:**
+- When the local node's address reaches CONFIRMED state and one or more M4P-managed TDMA links are registered (one NC_TDMA_JOIN per modality).
+- When an M4P-managed TDMA link registers after the local node's address is already CONFIRMED (late registration).
+
+**Payload:**
+
+```text
++-----------------------------------------------+
+| node_address           (NA width)              |
++-----------------------------------------------+
+| modality_name_len      (u8)                    |
+| modality_name          (modality_name_len B)   |
++-----------------------------------------------+
+```
+
+**Payload size:** `2 + M` bytes (8-bit) | `3 + M` bytes (16-bit), where M = `modality_name_len`.
+
+**Receiver behavior:**
+- Validate `node_address != 0` and that `modality_name` is valid UTF-8.
+- Add the sender to the local participant set for the named modality.
+- The participant with the lowest slot index in the updated participant list (excluding the joining node) is the **designated responder**. The designated responder MUST generate NC_TDMA_SCHEDULE immediately. Other participants SHOULD defer NC_TDMA_SCHEDULE generation for a suppression window (default: 2× cycle duration) and cancel if a matching NC_TDMA_SCHEDULE is received before the window expires. If the suppression window expires without a matching schedule arriving, the node SHOULD generate NC_TDMA_SCHEDULE with short random jitter.
+
+**Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_TDMA_JOIN packets on mesh modalities. TDMA participation is scoped to a single broadcast domain per modality; mesh forwarding would propagate join announcements beyond the domain boundary. On infrastructure modalities, normal Announce forwarding applies.
+
+`NC_TDMA_JOIN` establishes participant membership intent. Participant-list reconciliation and schedule-state propagation are carried by `NC_TDMA_SCHEDULE` (Section 11.7.18), and slot-index assignment for the resulting participant set is defined by Section 11.7.18.1.
+
+#### 11.7.18 NC_TDMA_SCHEDULE (32,031)
+
+**Purpose:** Broadcast the sender's current participant list for an M4P-managed TDMA modality.
+
+**Propagation:** Announce.
+
+**When sent:**
+- On TDMA membership changes (join or departure via claim expiration), subject to designated-responder storm prevention ([Section 11.7.17](#11717-nc_tdma_join-32030) receiver behavior).
+- For reconciliation when a node detects schedule divergence. Schedule divergence is typically detected when a received transmission's sender does not match the expected slot owner for the current time position in the TDMA cycle. Reconciliation broadcasts use short random jitter only, not the designated-responder suppression window, because delayed convergence is costlier than a few redundant schedule messages.
+
+**Payload:**
+
+```text
++-----------------------------------------------+
+| modality_name_len      (u8)                    |
+| modality_name          (modality_name_len B)   |
++-----------------------------------------------+
+| participant_count      (u8)                    |
++-----------------------------------------------+
+| repeat participant_count times:                |
+|   participant_address  (NA width)              |
++-----------------------------------------------+
+```
+
+**Payload size:** `2 + M + P` bytes (8-bit) | `2 + M + 2P` bytes (16-bit), where M = `modality_name_len` and P = `participant_count`.
+
+The payload represents the sender's current view of participants for one modality. Receivers MUST apply merge/defer rules below so incomplete sender views do not regress local schedule state.
+
+**Receiver behavior (merge semantics):**
+- Validate UTF-8 modality name, payload length/count consistency, and that all participant addresses are non-broadcast.
+- Build a merged participant list from:
+  1) participant addresses carried in the received payload, and
+  2) locally known active participants for that modality not present in the received payload.
+- Participants present in the received payload but lacking locally known claim-origin data MUST be deferred until the mapping is learned.
+- Update local TDMA state from the merged list (not by replacing with the received list).
+- If the received list is missing one or more locally known active participants, the receiver MUST schedule a reconciliation NC_TDMA_SCHEDULE with short random jitter.
+- Slot-index computation for the merged participant list MUST follow [Section 11.7.18.1](#117181-slot-assignment-algorithm).
+
+How a node converts converged schedule state into transmission opportunities is defined by the DataLink MAC-management mode in [Section 10.4](#104-data-link-adaptation).
+
+**Rationale (normative):** Merge semantics preserve locally known active participants and avoid transient slot collisions caused by incomplete sender knowledge. Reconciliation depends on detecting that the received list omitted active participants; replace semantics would discard that knowledge and break this detection path.
+
+**Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_TDMA_SCHEDULE packets on mesh modalities. Same rationale as NC_TDMA_JOIN: TDMA schedule state is scoped to a single broadcast domain per modality. On infrastructure modalities, normal Announce forwarding applies.
+
+#### 11.7.18.1 Slot Assignment Algorithm
+
+The slot-assignment algorithm for M4P-managed TDMA is normative and deterministic. Given the active participant set for a modality (after merge/defer rules in Section 11.7.18), nodes MUST sort participants by ascending `(claim_origin_ts, node_address)`.
+
+The sorted position determines slot index: `slot_index = position` (0-based). `num_participants` equals the number of sorted participants. Nodes with unknown `claim_origin_ts` are not assigned a slot until claim-origin data is known.
+
+Cycle geometry uses the configured timing parameters: cycle duration `Y = contention_cadence`, contention window `X = contention_window`, slot duration `S = slot_duration`, and `slots_per_cycle = floor((Y - X) / S)`. For participant index `i`, transmission opportunities are the round-robin sequence `g = i + k * num_participants` (for `k = 0, 1, 2, ...`), with:
+
+```text
+cycle(g) = floor(g / slots_per_cycle)
+position_in_cycle(g) = g mod slots_per_cycle
+slot_time(g) = epoch + cycle(g) × Y + X + position_in_cycle(g) × S
+```
+
+`epoch` is UTC epoch (`0`).
+
+On participant departure, implementations MUST remove the departed node and recompute positions from the compacted sorted list (no gap preservation). Gap preservation is not permitted.
+
+This algorithm defines participant-to-slot mapping only. The mechanism that emits send opportunities from that mapping depends on Section 10.4 mode selection.
 
 ### 11.8 Conflict Detection and Resolution
 

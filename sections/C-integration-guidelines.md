@@ -40,18 +40,20 @@ Application message payloads SHOULD be designed with the following principles:
 
 ### C.2 Data Link Integration
 
-Adaptive data link behaviors are the application's responsibility (see [Section 10.4](#104-data-link-adaptation)).
+Data-link adaptation follows the two-mode model in [Section 10.4](#104-data-link-adaptation): link-managed MAC and M4P-managed TDMA.
 
-**Example: Acoustic TDMA adaptation.** Consider a deployment using acoustic modems with configurable TDMA scheduling. On startup, the application pre-provisions the TDMA schedule based on the expected fleet composition (matching the M4P network state obtained via NC_NETWORK_STATE_REQUEST/RESPONSE per [Section 11.7.3](#1173-nc_network_state_response-32002) guidance). During operation:
+**Link-managed integration pattern.** The application (or autonomy stack) remains responsible for modem-specific MAC policy in link-managed mode. Typical actions include selecting contention parameters, power profiles, and local TDMA tables through modem-specific control interfaces. M4P remains schedule-agnostic in this mode and consumes only transmission opportunities and budgets from the adapter.
 
-1. A new AUV is deployed mid-mission. It broadcasts NC_NODE_ADDRESS_CLAIM and NC_NODE_SUMMARY.
-2. Each existing node's M4P network layer receives the summary and updates its peer registry.
-3. Each existing node's application observes the new peer in the registry.
-4. Each application reconfigures its local acoustic adapter's TDMA schedule to include a slot for the new node, using the adapter's modem-specific command interface.
-5. The new node's application similarly configures its acoustic adapter based on the fleet state it learns from NC_NETWORK_STATE_RESPONSE broadcasts or accumulated NC_NODE_SUMMARY broadcasts.
+**M4P-managed TDMA integration pattern.** In M4P-managed mode, participant convergence and slot assignment are protocol behaviors (`NC_TDMA_JOIN`, `NC_TDMA_SCHEDULE`, and the Section 11.7.18.1 algorithm). Applications typically provide baseline timing configuration and operational policy, while the M4P runtime derives slot ownership from converged network state and paces send opportunities accordingly.
 
-The M4P protocol is uninvolved in steps 3–5. The transport layer continues to receive transmission opportunities from the adapter and build transmissions — it does not know or care that the TDMA schedule changed. This separation means the same M4P transport code works with TDMA modems, CSMA modems, unscheduled modems, or any future MAC protocol, with only the application-layer integration logic changing.
+**Example: Acoustic deployment using M4P-managed TDMA.**
 
-**What M4P does not provide.** M4P does not guarantee that all nodes will converge on the same TDMA schedule simultaneously. Schedule convergence depends on NC message propagation latency and the application's adaptation logic. During the transition period, some nodes may operate with the old schedule while others have updated. This is acceptable because M4P's transport layer is schedule-agnostic — it sends when the adapter offers an opportunity, regardless of the underlying MAC state. Temporary schedule inconsistency may reduce acoustic throughput but does not cause protocol-level failures.
+1. A node starts with M4P-managed acoustic mode enabled and baseline TDMA timing configured.
+2. During bootstrap, contention-window opportunities carry NC address and TDMA join traffic.
+3. Nodes exchange `NC_TDMA_JOIN` and converge participant state through `NC_TDMA_SCHEDULE`.
+4. Each node computes slot ownership from `(claim_origin_ts, node_address)` ordering and transitions to slot-paced transmission opportunities.
+5. On join/departure events, schedule convergence updates slot ownership without requiring application-level slot-table rewrites.
+
+**What remains application-specific.** M4P does not choose mission policy (for example, which links use link-managed vs M4P-managed mode, how conservative contention timing should be, or which modem-level knobs to tune by mission phase). Applications continue to own those decisions.
 
 ---

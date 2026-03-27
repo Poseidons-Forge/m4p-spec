@@ -36,4 +36,10 @@ Per-message-type defaults (priority, TTL, modality mask) are currently static de
 
 **Mismatch handling.** Unlike address conflicts, default mismatches have no protocol-level resolution; the protocol would detect and surface mismatches to the application layer for operator intervention. NC message type IDs for these four messages are not yet allocated.
 
+### 13.4 Graceful TDMA Departure
+
+Currently, TDMA participant departure is detected passively via claim expiration ([Section 11.3](#113-claim-expiration-and-renewal)). When a peer's claim expires, all participants remove it from the TDMA schedule and recompute slot assignments. This works correctly but introduces a convergence delay equal to the `expiration_interval`.
+
+A future **NC_TDMA_DEPARTURE** message (Announce propagation) would allow a node to explicitly announce withdrawal from one or more TDMA modalities, enabling immediate schedule recomputation by remaining participants. Claim expiration remains the correctness backstop for nodes that depart without sending the message (crash, link loss, power failure). Key challenges include distinguishing voluntary TDMA departure from full network departure ([Section 13.2](#132-graceful-network-departure)), and handling stale departure messages in partitioned networks.
+
 ---
