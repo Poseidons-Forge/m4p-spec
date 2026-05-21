@@ -207,7 +207,7 @@ age = max(0, age)
 
 **Message Counter.** `msg_counter` is a 7-bit rolling counter, range `0`–`127`, maintained independently per source address. Each Client Address hosted on a node has its own counter, and the node itself maintains a separate counter for Network Control messages (which use the Node Address as source, per [Section 11.6.1](#1161-transport-properties)). A node hosting *n* clients therefore maintains *n* + 1 independent counters. Each counter is incremented for every new message originated by that source and rolls over to `0` after `127`.
 
-**Payload Length and Payload.** `payload_length` maximum value: `65,535`. The interpretation of the payload is determined by the `message_type_id` and is outside the scope of this specification (except for Network Control messages, whose payload formats are defined in [Section 11.7](#117-nc-message-catalog)).
+**Payload Length and Payload.** `payload_length` maximum value: `65,535`. `payload_length = 0` is valid; applications MAY submit zero-byte payloads for message types whose schema has no encoded fields. The interpretation of the payload is determined by the `message_type_id` and is outside the scope of this specification (except for Network Control messages, whose payload formats are defined in [Section 11.7](#117-nc-message-catalog)).
 
 ### 5.7 Flags and Optional Fields
 
