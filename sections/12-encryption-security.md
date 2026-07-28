@@ -140,6 +140,8 @@ nonce = AES-CTR-NONCE(network_id, source_ca, timestamp_24h, msg_counter, message
 | 12–13 | `fragment_offset` | 2 B | Fragment byte offset. `0x0000` for unfragmented messages. |
 | 14–15 | `reserved` | 2 B | Set to `0x0000`. |
 
+**AES-CTR counter block.** The 16-octet nonce is the initial 128-bit counter block for AES-CTR encryption of the payload (NIST SP 800-38A). Implementations MUST increment the counter as a single 128-bit big-endian integer, by one per 16-octet cipher block, with octet 15 the least-significant counter octet and octet 0 the most-significant. This convention is mandatory for interoperability: a node that increments differently produces a different keystream and cannot exchange encrypted payloads. Because `payload_length` is a 16-bit field (maximum `65,535` octets, i.e. at most 4,096 cipher blocks), the block counter for a single payload never exceeds `4,095`; it is confined to the two low counter octets (14–15) — the `reserved` octets, which are `0x0000` in the initial block — and never carries into octet 13 (part of `fragment_offset`) or any higher-order nonce octet.
+
 **Response packet nonce fields.** For Response packets, the nonce fields are populated as follows:
 
 | Nonce Field | Response Header Source |
@@ -433,5 +435,76 @@ Identity obfuscation is an application-layer responsibility. M4P does not define
 - **Active acoustic tampering:** Mitigated when `AUTH_TAG_SIZE != 00` is used (see [Section 12.2.3](#1223-authentication-tag)).
 
 **Standards alignment.** M4P specifies AES-256-CTR (NIST SP 800-38A) and AES-CMAC (NIST SP 800-38B). Deployments requiring FIPS 140-2/3 assurances SHOULD use validated modules. Independent payload-cipher and DataLink layers support defense in depth (for example, CSfC). AES-256 satisfies CNSA 2.0 symmetric baseline requirements.
+
+### 12.7 Representation Keying for Degradable Message Types
+
+Certain message types MAY be designated **degradable** in a deployment's network-wide message-type configuration (see [Section 2.4.3](#243-recommended-configuration-should)). For a degradable type, a node MAY transmit a smaller but still valid encoding of a message — a **representation** — in place of the full encoding when the full encoding does not fit the available payload budget. Representations of one message are complete, standalone payloads that differ only in the lower-value optional content they retain, and are distinguished on the wire solely by `payload_length`. How representations are produced is outside the scope of this specification; this section specifies only how the payload cipher ([Section 12.2](#122-m4p-payload-cipher)) keys them, so that independently implemented nodes interoperate.
+
+This construction applies to **origin-produced, unfragmented** representations. Fragmented packets are keyed exactly as in [Section 12.2.5](#1225-fragmentation-interaction) and are never representation-keyed (see [Section 12.7.3](#1273-shared-nonce-and-counter-discipline)).
+
+**Why representation keying is required.** The nonce ([Section 12.2.2](#1222-nonce-derivation)) is derived only from logical-identity header fields; `payload_length` is not a nonce input. Every unfragmented representation of one message therefore shares a single nonce. AES-CTR requires that distinct plaintexts under a shared nonce be separated by distinct **keys** — otherwise two representations reuse keystream on their overlapping blocks. Representation keying provides that separation by deriving a distinct payload key per `payload_length`, leaving the nonce unchanged.
+
+#### 12.7.1 Representation Key Derivation
+
+For every unfragmented transmission of a degradable message type, the payload confidentiality key is derived per representation from the packet's `payload_length`:
+
+```text
+repr_key = HKDF-Expand(
+    PRK    = <active payload cipher key>,   # see "PRK provenance" below
+    info   = "M4P-repr" || payload_length_be16,
+    L      = 32  (AES-256 key length)
+)
+```
+
+- **`"M4P-repr"`** is the exact 8-octet ASCII string `M4P-repr` (octets `0x4D 0x34 0x50 0x2D 0x72 0x65 0x70 0x72`).
+- **`payload_length_be16`** is the packet's cleartext `payload_length` encoded as two big-endian octets — the same value carried in the header and authenticated in `header_aad` ([Section 12.2.3](#1223-authentication-tag)). The `info` string is thus 10 octets total.
+
+**HKDF-SHA-256 is pinned.** Representation keying MUST use HKDF ([RFC5869]) with SHA-256. Unlike epoch key derivation ([Section 12.4.1](#1241-payload-cipher-key)), which is guidance and permits a choice of KDF and hash, representation keying admits no such latitude: every node derives `repr_key` independently from the cleartext `payload_length` with no negotiation, so the construction must be fixed network-wide. The hash-agility and KDF-choice latitude of [Section 12.4.1](#1241-payload-cipher-key) does NOT extend to representation keying.
+
+**PRK provenance.** `PRK` is the **active payload cipher key**, whatever its provenance: the epoch key for the current epoch when epoch rotation is in use ([Section 12.4.1](#1241-payload-cipher-key)), or the master PSK directly when epoch rotation is disabled. `repr_key` thus descends from the same key material as the rest of the payload cipher for that epoch.
+
+#### 12.7.2 Confidentiality and Authentication Keys
+
+Representation keying splits the payload cipher's two keys:
+
+- **Payload confidentiality** (AES-CTR) for an unfragmented representation of a degradable type uses `repr_key(payload_length)` ([Section 12.7.1](#1271-representation-key-derivation)).
+- **The authentication tag** (AES-CMAC, [Section 12.2.3](#1223-authentication-tag)) remains keyed by the **epoch key**, NOT `repr_key`. The tag is computed and verified exactly as in [Section 12.2.3](#1223-authentication-tag), over the representation's ciphertext.
+
+Because `payload_length` is part of `header_aad` ([Section 12.2.3](#1223-authentication-tag)), the tag binds the representation length: tampering with `payload_length` invalidates the tag. When a tag is present, the receiver MUST verify it before deriving `repr_key` or decrypting ([Section 12.2.4](#1224-transport-pipeline)). Trial verification remains exactly two attempts — the current epoch key, then the previous ([Section 12.4.3](#1243-key-rotation)); the epoch whose key verifies the tag is the epoch from whose key `repr_key` is then derived. For untagged traffic the same two-epoch trial governs `repr_key` derivation, with no integrity signal, as for any untagged payload.
+
+#### 12.7.3 Shared Nonce and Counter Discipline
+
+All unfragmented representations of one message are encrypted under the **standard nonce** ([Section 12.2.2](#1222-nonce-derivation)) with `fragment_offset = 0x0000` and the `reserved` octets (14–15) left at `0x0000`. Representation keying does NOT modify any nonce octet; confidentiality separation between representations comes ENTIRELY from distinct `payload_length` values mapping to distinct `repr_key` values.
+
+Two rules are therefore normative:
+
+- **Distinct content requires distinct length.** A sender MUST NOT transmit two unfragmented representations of the same message that have equal `payload_length` but different payload content: equal length yields an identical `(repr_key, nonce)` pair over different plaintext, which reuses keystream. A sender therefore exposes at most one representation per distinct `payload_length` for a given message.
+- **A packet is never both degraded and fragmented.** A concrete packet is either an unfragmented complete representation or a fragment, never both. Fragments are epoch-keyed byte-slices of a single frozen full-message ciphertext ([Section 12.2.5](#1225-fragmentation-interaction), [Section 8](#8-fragmentation-and-reassembly)) and are never `repr_key`-keyed. A representation encrypted under `repr_key` MUST NOT subsequently be fragmented; if a message will be fragmented, the sender MUST select fragmentation before encryption so the message follows the epoch-keyed fragmentation rules of [Section 12.2.5](#1225-fragmentation-interaction).
+
+**Counter discipline.** The safety of the shared nonce rests on the AES-CTR counter convention of [Section 12.2.2](#1222-nonce-derivation): octet 15 is the least-significant counter octet, so the low nonce octets lie inside the counter's own increment region. Placing a per-representation discriminator in those octets — rather than in the key — would put distinct representations on overlapping counter runs and reuse keystream; representation keying avoids this precisely by leaving the nonce fixed and varying the key. A 16-bit `payload_length` confines each payload's counter to octets 14–15 ([Section 12.2.2](#1222-nonce-derivation)), so those octets are `0x0000` in the initial counter block of every representation.
+
+#### 12.7.4 Receiver Key Selection
+
+A receiver selects the payload-decryption key from cleartext header fields alone; no representation metadata appears on the wire:
+
+```text
+if IS_FRAGMENT is set:                  key = epoch key
+else if message_type_id is degradable:  key = repr_key(payload_length)
+else:                                   key = epoch key
+```
+
+This selection is static from the cleartext header. For a degradable type the receiver cannot — and need not — distinguish the full representation from a degraded one: the full representation's length also varies per message, so **every** unfragmented send of a degradable type, including the full representation, is `repr_key(payload_length)`-keyed. The receiver reconstructs `repr_key` from the `payload_length` it reads and decrypts; it never reproduces the degradation.
+
+#### 12.7.5 Static-Per-Catalog Keying and the Participation Gate
+
+Whether a message type is degradable is a **static, network-wide** property of the deployment's message-type configuration ([Section 2.4.3](#243-recommended-configuration-should)); all nodes that host clients for that type MUST be configured identically. Keying follows the designation, not runtime behavior: a degradable type is `repr_key`-keyed on every unfragmented send whenever the payload cipher is active, **regardless of whether any degradation is actually applied** to a given message.
+
+A receiver cannot determine from the wire which key family a sender used — the tag is epoch-keyed either way ([Section 12.7.2](#1272-confidentiality-and-authentication-keys)) and so cannot disambiguate. A disagreement on the degradable designation therefore renders a type's unfragmented traffic undecryptable, with no fallback the receiver can detect. Such a disagreement is a **hard participation gate**: a node MUST NOT enable the payload cipher for a degradable type in a network whose nodes do not uniformly carry that designation, and a node MUST NOT fall back to epoch keying for a type its configuration marks degradable. Enabling or disabling degradation at runtime does NOT change the keying.
+
+#### 12.7.6 Epoch Rotation Requirement for Degradable Traffic
+
+The 24-hour timestamp wrap of [Section 12.2.2](#1222-nonce-derivation) repeats nonce tuples for long-lived periodic traffic. For non-degradable traffic the specification permits either of two mitigations — key rotation or timing jitter. The shared nonce removes that choice for degradable traffic: because all representations of a message share one nonce and are separated only by `repr_key`, and `repr_key` descends from the epoch key, the only mitigation that refreshes the keystream across the wrap is a new epoch key. Timing jitter does NOT compose with the shared-nonce construction, because jittered transmissions of one message still share its nonce.
+
+A deployment that enables the payload cipher for degradable traffic MUST therefore use time-based epoch rotation ([Section 12.4.1](#1241-payload-cipher-key), [Section 12.4.3](#1243-key-rotation)) with a rotation period strictly less than 24 hours. This tightens the general key-rotation SHOULD of [Section 12.2.2](#1222-nonce-derivation) to a MUST for degradable traffic; the timing-jitter alternative is not sufficient for degradable traffic.
 
 ---
