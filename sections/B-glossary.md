@@ -31,7 +31,7 @@ including commercial, under the following terms:
 | **Message Instance ID (MIID)** | A unique identifier derived from packet header fields, used for deduplication and request/response correlation. |
 | **Message Type ID** | An unsigned integer classifying the packet payload and determining its transport semantics (Status `0-7,999`, Event `8,000-9,999`, Request/Response `10,000-31,998`, or Network Control `32,000-32,767`). |
 | **M4P-managed TDMA** | An opt-in MAC management mode where the M4P protocol computes TDMA slot assignments from network state and pushes schedule parameters to the link. See [Section 11.10](#1110-tdma-slot-allocation). |
-| **Modality** | A class of data link (acoustic, radio, satellite, LAN, IP/MQTT). |
+| **Modality** | A class of data link from the canonical vocabulary (`acoustic`, `radio`, `satellite`, `lan`, `wan`). The input aliases `mqtt`, `ip/mqtt`, and `ip-mqtt` identify `wan`; emitted names use `wan`. |
 | **Network Control** | Reserved message types (32,000-32,767) used for transport-internal and network layer coordination. Not delivered to application clients. |
 | **Node** | A physical participant in the M4P network. Runs the M4P transport, hosts zero or more Clients, and connects to one or more DataLinks. Identified globally by a NodeUID and locally by a Node Address (NA). |
 | **Node Address (NA)** | An 8-bit or 16-bit local address identifying a node for transport and forwarding purposes. Does not appear in transport layer data packet headers; carried in transmission metadata and network layer messages. |

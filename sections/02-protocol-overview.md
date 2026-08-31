@@ -231,7 +231,7 @@ The effective TTL range remains bounded below this window (maximum encodable TTL
 | **Fragment** | Portion of a Message split across multiple Packets when the payload exceeds a DataLink's budget. All Fragments share the same MIID and Message Type ID. | [Section 8](#8-fragmentation-and-reassembly) |
 | **Transmission** | One send operation on a DataLink; contains one or more serialized Packets plus the sender's NA. | [Section 9.7](#97-link-opportunities-and-transmission-building) |
 | **DataLink** | Modality adapter connecting M4P to a physical communication layer. Exposes transmission opportunities and payload budgets; encapsulates all modality-specific mechanics. A node may have multiple DataLinks active simultaneously. | [Section 10](#10-datalink-abstraction) |
-| **Modality** | Class of data link technology (acoustic, radio, satellite, LAN, IP/MQTT). Classified as **infrastructure** (reliable delivery to all peers; rebroadcast is redundant) or **mesh** (range-limited/lossy; multi-hop rebroadcast propagates packets). | [Section 9.8.2](#982-infrastructure-and-mesh-modality-forwarding) |
+| **Modality** | Class of data link technology from the canonical vocabulary (`acoustic`, `radio`, `satellite`, `lan`, `wan`). Operator/API parsers may accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but emitters use `wan`. Modalities are classified as **infrastructure** (reliable delivery to all peers; rebroadcast is redundant) or **mesh** (range-limited/lossy; multi-hop rebroadcast propagates packets). | [Section 9.8.2](#982-infrastructure-and-mesh-modality-forwarding) |
 
 **Message fields.** A Message carries required fields (Message Type ID, payload), a destination ClientUID for directed Request/Response traffic, and optional overrides (priority, TTL, modality mask, status key for Status only, authentication tag). Field definitions are in [Section 5.7.6](#576-optional-field-definitions).
 
@@ -288,7 +288,7 @@ erDiagram
         string adapter_type "Modality-specific adapter"
     }
     MODALITY {
-        string name "acoustic / radio / satellite / LAN / IP-MQTT"
+        string name "acoustic / radio / satellite / lan / wan"
     }
 ```
 

@@ -308,10 +308,12 @@ Present when `MODALITY_MASK_PRESENT` is set. The bit assignments are:
 | 1 | Radio |
 | 2 | Satellite |
 | 3 | LAN |
-| 4 | IP/MQTT |
+| 4 | WAN |
 | 5–7 | Reserved |
 
 When absent, the message type's default modality mask applies. Nodes MUST NOT transmit a packet on a modality not permitted by the effective modality mask.
+
+The canonical modality vocabulary is `acoustic`, `radio`, `satellite`, `lan`, and `wan`. Operator and API parsers MAY accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but any emitted modality name MUST use `wan`. These aliases all select bit 4 and do not alter the wire encoding.
 
 ##### TTL Override
 
