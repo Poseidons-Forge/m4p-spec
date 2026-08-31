@@ -14,6 +14,8 @@ including commercial, under the following terms:
 
 ## 11. Network Layer {#11-network-layer}
 
+*PSFI-1347 demand catalog update drafted by a Codex agent, 2026-08-31.*
+
 **[WIRE FORMAT + BEHAVIORAL]**
 
 Network layer functions operate through Network Control (NC) messages — reserved message types (32,000–32,767) carried by the transport layer using the same store-carry-forward mechanisms as application traffic (see [Section 4.1](#41-message-type-id-ranges)). NC messages are never delivered to application clients. The network layer is fully decentralized; address coordination, conflict resolution, and peer discovery decisions are made locally from information exchanged between peers.
@@ -298,9 +300,12 @@ accepts the first valid answer and discards duplicates.
 
 ### 11.7 NC Message Catalog
 
-#### 11.7.0 Scheduling Bias
+#### 11.7.0 Scheduling Priority
 
-**Scheduling bias.** NC messages have the highest *default* class bias relative to application traffic because correct address mappings and peer state are prerequisites for reliable application delivery. Recommended class bias order: (1) Network Control, (2) Request, (3) Response, (4) Event, (5) Status. This is a scheduling bias, not strict preemption: higher-priority eligible application packets MAY outrank lower-priority NC packets.
+**Scheduling priority.** NC messages use their catalog priority in the same score-density model as
+application records. NC does not receive a separate class multiplier. The deliberate catalog
+values below place claims above routine data, while demand state at priority 120 competes below
+claims and above lower-priority routine records when novelty and wire size are otherwise equal.
 
 Conflict-related catalog entries in this section define trigger surfaces and message contents. Deterministic winner/loser rules, convergence, and declaration suppression are defined canonically in [Section 11.8](#118-conflict-detection-and-resolution).
 
@@ -333,6 +338,7 @@ catalog values keep protocol NC above routine data while bounding retained state
 | 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | Everywhere | 255 | 3,600 s | Stop using a wrong address |
 | 32,030 | NC_TDMA_JOIN | Announce | Infrastructure only | 200 | 3,600 s | TDMA participant discovery |
 | 32,031 | NC_TDMA_SCHEDULE | Announce | Infrastructure only | 200 | 3,600 s | TDMA schedule convergence |
+| 32,040 | [NC_DEMAND_STATE](#1111-demand-state-record) | Announce | Everywhere | 120 | 120 s | Compact outstanding demand and cures |
 
 #### 11.7.1 NC_NODE_SUMMARY (32,000)
 

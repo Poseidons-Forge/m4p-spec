@@ -10,6 +10,7 @@
 09-transport-behavior.md
 10-datalink-abstraction.md
 11-network-layer.md
+11a-demand-state.md
 12-encryption-security.md
 13-future-features.md
 14-normative-references.md

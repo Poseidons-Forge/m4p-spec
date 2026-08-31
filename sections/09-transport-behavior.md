@@ -16,6 +16,8 @@ including commercial, under the following terms:
 
 **[BEHAVIORAL + GUIDANCE]**
 
+*PSFI-1347 transport update drafted by a Codex agent, 2026-08-31.*
+
 ### 9.1 Store-Carry-Forward Model
 
 **[BEHAVIORAL]**
@@ -39,26 +41,28 @@ Each node MUST maintain a message store (or equivalent data structure) that trac
 - Effective TTL and creation timestamp.
 - Effective priority (default or overridden).
 - Effective modality mask (default or overridden).
-- Per-modality last-sent time and send count.
+- Per-DataLink-adapter successful-send time and send count, including sends since the current
+  audience was established.
 - Whether the packet originated from a locally hosted client ("internal") or was received from the network ("external").
-- Per-MIID forwarding history (which neighbors have already received this packet).
+- Evidence sufficient to distinguish confirmed peer holding from estimated peer holding. The
+  representation of this evidence is implementation-defined.
 - Per-reassembly-key received byte-range coverage for fragmented messages (`[offset, offset + payload_length)`), used for both reassembly completion and fragment forwarding suppression.
 
-Forwarding history entries MUST be retained for the lifetime of the associated MIID in the message store — that is, until the packet expires (TTL) or is purged. When the MIID entry is purged, its forwarding history is purged with it. Implementations SHOULD track forwarding history using a compact representation (e.g., a bitmask or small set of Node Addresses) rather than an unbounded list.
+Peer-holding evidence associated with a retained record MUST be purged when that record expires,
+is superseded, or is otherwise removed. Implementations MUST NOT use estimated holding to declare
+directed traffic terminal; terminal knowledge requires confirmed evidence.
 
 For Status messages, the store MUST additionally track:
 
 - The latest value per `(source CA, message_type_id, status_key)` variant. Newer Status messages MUST supersede older ones for the same variant.
-- Per-modality last-sent time for each Status variant.
+- Per-DataLink-adapter send state for each Status variant.
 
 For Event messages, the store MUST additionally track:
 
 - Independent per-message instances (no supersession by newer same-type Events).
-- Per-modality last-sent time and send count per Event message instance.
+- Per-DataLink-adapter send state per Event message instance.
 
-For cached Responses, the store SHOULD additionally track:
-
-- Per-modality count of how many times the matching Request MIID has been observed after the Response was cached.
+Cached Responses use the same per-link spacing and peer-holding evidence as other retained records.
 
 Figure 6 illustrates the per-packet lifecycle within the message store, showing the states a packet traverses from initial receipt (or local submission) through deduplication, storage, scheduling, transmission, and terminal disposition.
 
@@ -147,7 +151,7 @@ flowchart TD
 
 Figures 6a–6b show the message lifecycle within the per-node message store. Figure 6a shows the inbound path for packets received from the network. Figure 6b shows the outbound path for directed messages submitted by a local application client, including the pending-address-resolution state for destinations with unknown CA mappings. Both paths converge at STORED, from which the forwarding cycle (STORED → SCHEDULED → TRANSMITTED → STORED) is identical.
 
-As shown in Figure 6a, unfragmented packets that pass message-level deduplication and fragments that contribute new byte ranges enter the STORED state, from which they cycle through SCHEDULED → TRANSMITTED → STORED as link opportunities arise. Forwarding history is updated on each TRANSMITTED transition, tracking which neighbors have already received the packet. Packets addressed to a local client are both DELIVERED to the client and STORED for forwarding to other neighbors — these are not mutually exclusive outcomes. Terminal states (EXPIRED, DUPLICATE, SUPERSEDED) remove packets from the active store. Status coalescing (the SUPERSEDED transition) occurs when a newer Status value arrives for the same `(source_CA, message_type_id, status_key)` variant, as specified in [Section 9.3.3](#933-status-coalescing).
+As shown in Figure 6a, unfragmented packets that pass message-level deduplication and fragments that contribute new byte ranges enter the STORED state, from which they cycle through SCHEDULED → TRANSMITTED → STORED as link opportunities arise. Each successful transmission updates the record's per-link send state and peer-holding estimate. Packets addressed to a local client are both DELIVERED to the client and STORED for forwarding to other neighbors — these are not mutually exclusive outcomes. Terminal states (EXPIRED, DUPLICATE, SUPERSEDED) remove packets from the active store. Status coalescing (the SUPERSEDED transition) occurs when a newer Status value arrives for the same `(source_CA, message_type_id, status_key)` variant, as specified in [Section 9.3.3](#933-status-coalescing).
 
 #### 9.2.1 Pending Address Resolution (Outbound)
 
@@ -166,59 +170,80 @@ When the transport layer accepts a directed message (Request or Response) from a
 
 When a node delivers a received message to a local application client, the transport provides the source **ClientUID** resolved from the source CA via the address mapping table. If the source CA has no known identity mapping, the node SHOULD emit an NC_CLIENT_UID_QUERY ([Section 11.7.6](#1176-nc_client_uid_query-32015)) for the unknown source CA, subject to query coalescing (the node MUST NOT emit a duplicate query if one for the same CA is already outstanding and has not expired). The message SHOULD still be delivered to the application with the source identity marked as unresolved.
 
-### 9.3 Resend Behavior
+### 9.3 Emergent Resend Cadence
 
-#### 9.3.1 Request Resend
+**[BEHAVIORAL + GUIDANCE]**
 
-Requests MAY be retransmitted multiple times on each modality to improve robustness in lossy or intermittent environments. The effective resend frequency for a given `(Request MIID, modality)` SHOULD:
+M4P does not assign a separate resend algorithm to each message class. Every retained application,
+Network Control, and forward-compatible opaque record is reconsidered when a DataLink adapter
+offers an opportunity. Eligibility, audience novelty, effective priority, wire size, and the
+available byte budget together determine whether the record is sent. A send opportunity is never
+created by a resend timer.
 
-- Start aggressively (transmit as soon as possible on the first opportunity).
-- Back off approximately exponentially with the number of prior transmissions on that modality.
-- Respect any per-modality minimum send interval configuration.
+#### 9.3.1 Common Spacing Ladder
 
-Requests MUST NOT be retransmitted after their effective TTL has expired.
+The first send after insertion or an audience reset MAY use the first eligible opportunity. After
+a successful send on one DataLink adapter, that record MUST NOT be sent again on the same link and
+audience before the configured spacing interval has elapsed. If `n` is the number of successful
+sends since the audience reset, the interval before the next send is:
 
-**Response-based resend stop condition.** The originating node SHOULD cease resending a Request when matching Responses indicate that the Request has been received by its intended destination(s):
+```text
+minimum_spacing(class) * spacing_multiplier^min(n - 1, maximum_exponent)
+```
 
-- **Unicast Requests:** The originator SHOULD cease resend when a Response matching the Request MIID is received from the destination CA.
-- **Group Requests (`ADDITIONAL_DEST_PRESENT` set):** The originator SHOULD cease resend when matching Responses have been received from all CAs in the destination list. The originator tracks which destination CAs have responded by matching incoming Responses (via `request_MIID` and `source_CA`) against the destination list.
+The shipped recommended defaults use a spacing multiplier of `2`, a maximum exponent of `6`, and
+the following minimum spacing values:
 
-In both cases, the originator MUST stop resending at TTL expiry regardless of Response status. The Response-based stop condition is an optimization that reduces unnecessary retransmissions; a Request that does not elicit Responses (e.g., a fire-and-forget command) continues resending per the exponential backoff schedule until the backoff limit is reached or TTL expires.
+| Record class | Minimum spacing | Resulting default ladder |
+|---|---:|---|
+| Network Control | 5 s | 5, 10, 20, 40, 80, 160, then 320 s |
+| Request | 1 s | 1, 2, 4, 8, 16, 32, then 64 s |
+| Response | 1 s | 1, 2, 4, 8, 16, 32, then 64 s |
+| Event | 5 s | 5, 10, 20, 40, 80, 160, then 320 s |
+| Status | 10 s | 10, 20, 40, 80, 160, 320, then 640 s |
+| Forward-compatible opaque | 5 s | 5, 10, 20, 40, 80, 160, then 320 s |
 
-#### 9.3.2 Response Caching and Resend
+The capped interval repeats; reaching the cap does not itself remove the record. TTL, one-hop
+rules, terminal confirmed knowledge for directed traffic, and supersession remain the terminal
+conditions. A newly observed peer, peer-restart evidence, or demand evidence that clears stale
+knowledge resets spacing for the affected audience so newly useful traffic can compete promptly.
 
-The transport layer MUST NOT accept more than one Response per `(request_MIID, message_type_id, source_CA)` from a local client. If a client submits a Response and the transport has already accepted a Response with the same `(request_MIID, message_type_id, source_CA)` key, the transport MUST reject the submission with an error and MUST NOT encrypt or transmit it (see [Section 6.5](#65-deduplication-rules) for rationale). If a client receives a duplicate of a Request it has already responded to (detected via the Request's MIID), the node's transport layer handles retransmission of the cached Response — the client is not asked to generate a second Response.
+Spacing is a floor, not a target cadence. Once the floor opens, the record still competes for
+packing by effective priority, estimated novel utility, and wire size. Tick-driven opportunities
+use recommended novelty admission floors of `0.02` on mesh links and `0.15` on infrastructure
+links; explicitly offered opportunities use `0.005` total audience novelty. These floors bound
+low-value retransmission without scheduling any send.
 
-Nodes MAY cache Responses keyed by the full dedup key `(request_MIID, message_type_id, source_CA)`. When a group Request addresses multiple CAs hosted on the same node, each local CA may independently submit a Response; the node caches up to one Response per local CA, each tracked independently. For each cached Response and modality `m`, the transport tracks:
+#### 9.3.2 Request and Response Termination
 
-- The number of times the Response has been transmitted on `m`.
-- The number of times the matching Request MIID has been observed on `m` (total observations on that modality since the Response was cached).
+Requests and cached Responses use the common ladder. The transport layer MUST NOT accept more than
+one Response per `(request_MIID, message_type_id, source_CA)` from a local client. A duplicate
+submission MUST be rejected and MUST NOT be encrypted or transmitted; the retained Response, not
+the client, remains the forwarding candidate when a Request is heard again.
 
-On a given modality `m`, a cached Response SHOULD be transmitted at most `max(1, n)` times, where `n` is the number of times the matching Request MIID has been observed on `m`. This ensures:
-
-- Responses are sent at least once per DataLink adapter instance.
-- Responses do not "overshoot" the number of observed Requests.
-
-Once this budget is exhausted or the Response's TTL expires, further observations of the same Request MIID on that modality SHOULD NOT trigger additional Response transmissions.
+A Request becomes terminal when every destination CA has a matching Response or satisfied-demand
+entry. A Response becomes terminal when confirmed evidence shows that the requester's host holds
+it. Until those conditions or TTL expiry, both classes remain ordinary novelty-governed candidates.
+Demand wanting and satisfied evidence can reopen or terminate those gradients as specified in
+[Section 11.11](#1111-demand-state-record).
 
 #### 9.3.3 Status Coalescing
 
-The transport layer MUST maintain only the latest Status per `(source CA, message_type_id, status_key)` variant; newer Status messages supersede older ones.
+The transport layer MUST maintain only the latest Status per
+`(source CA, message_type_id, status_key)` variant. Status MIIDs from the same source MUST be
+ordered by `timestamp_24h` modulo 86,400 using a half-day comparison window; within the same
+second, the greater message counter is newer. An older Status MUST NOT replace or regress the
+retained variant, including across midnight.
 
-Status coalescing is Status-only. Implementations MUST NOT apply Status supersession rules to Event, Request, or Response packets.
-
-For each modality, the scheduler tracks when the latest Status for a given variant was last transmitted. The effective scheduling priority for Status messages MAY depend on:
-
-- The message type's base priority.
-- Time since that Status variant was last sent on the modality (variants that have not been sent recently SHOULD receive a scheduling boost, capped by implementation).
-
-On rate-limited modalities, this promotes rotation across Status variants while still favoring high-priority Status types. On high-throughput modalities, implementations MAY simplify to sending each new Status value at most once per update.
+Status coalescing is Status-only. Implementations MUST NOT apply Status supersession rules to
+Event, Request, or Response packets. Each retained Status version otherwise uses the common
+spacing and novelty rules. An optional infrastructure Status limiter MAY impose an additional
+minimum interval, but it is a throttle and MUST NOT cause an unchanged Status to be resent.
 
 #### 9.3.4 Event Resend
 
-Event messages MAY be retransmitted on each modality to improve robustness in lossy or intermittent environments, using the same general eligibility style as Status (TTL-valid, modality-allowed, and send-interval/backoff policy as configured by the implementation).
-
-Unlike Status, Event resend scheduling is per message instance: each retained Event is an independent resend candidate until expiration. Nodes MUST NOT coalesce or supersede Event messages during resend scheduling.
+Each retained Event is an independent candidate under the common spacing ladder until it expires.
+Nodes MUST NOT coalesce or supersede Event instances during scheduling.
 
 ### 9.4 Priority and Scheduling
 
@@ -228,24 +253,24 @@ Unlike Status, Event resend scheduling is per message instance: each retained Ev
 
 **Two-stage scheduling model.** Implementations SHOULD schedule in two stages:
 
-1. **Eligibility (gating):** determine whether a packet is eligible to send on the current modality and time, including TTL/expiration checks, forwarding-history rules, modality mask checks, Request resend backoff, Response resend budget, Event resend rules, and Status coalescing rules.
-2. **Ordering (ranking):** rank eligible packets by effective priority for selection/packing.
+1. **Eligibility (gating):** determine whether a record is eligible on the current DataLink adapter,
+   including TTL, policy, one-hop, observation, terminal-knowledge, spacing, admission-floor, and
+   wire-feasibility checks.
+2. **Ordering (ranking):** rank eligible records by expected novel utility per wire byte and pack
+   them within the offered budget.
 
-**Class bias defaults.** Implementations SHOULD apply class-aware bias so the default behavior favors:
+The recommended score density is:
 
-1. **Network Control** — highest default bias.
-2. **Request** — above Response, Event, and Status.
-3. **Response** — above Event and Status.
-4. **Event** — above Status.
-5. **Status** — lowest default bias.
+```text
+effective_priority * audience_novelty * in_flight_boosts / wire_size
+```
 
-Class bias is advisory and implementation-defined (for example: weights, offsets, tie-breakers, or queue ordering). It is **not** an absolute preemption rule. A sufficiently high-priority packet in any class MAY outrank a lower-priority packet in another class.
+Fragment-completion and Fragment NACK urgency are in-flight boosts. Message class and local versus
+forwarded origin do not add separate score multipliers. Cross-class preference comes from the
+message catalog's default priorities, and the existing per-packet override remains authoritative.
 
-**Retransmission interaction.** Request backoff, Response resend-budget, Event per-instance resend, and Status coalescing rules are part of eligibility, not class precedence. Backoff limits *when* a Request can be resent; resend budgets limit *how many times* a Response can be sent per modality; Event resend rules keep each retained Event as an independent candidate until expiry. Once packets are eligible, they compete using effective priority.
-
-**Internal vs. external bias.** Internal traffic comprises packets whose `source` CA is assigned to a client hosted on the local node (originated locally). External traffic comprises packets first observed from the network (received from another node). Implementations SHOULD prefer internal traffic over external traffic when effective priority is otherwise similar.
-
-**Future class compatibility.** If additional application classes are introduced in future revisions, they SHOULD integrate through the same mechanism: default per-type priorities plus optional class bias, without introducing strict cross-class barriers.
+Future application classes SHOULD integrate through the same mechanism: a catalog priority,
+ordinary knowledge-based novelty, the common spacing ladder, and the common hard filters.
 
 ### 9.5 Modality Classification
 
@@ -253,9 +278,14 @@ Class bias is advisory and implementation-defined (for example: weights, offsets
 
 M4P distinguishes between two classes of modalities for scheduling purposes. The classification of each modality is deployment-specific.
 
-**Rate-limited / capacity-constrained modalities.** Examples: acoustic links, satellite links with strict airtime budgets. Characteristics: transmission opportunities are infrequent (seconds to tens of seconds between opportunities), and each transmission has a small payload limit. Scheduling approach: Full effective-priority scoring — incorporating class-bias weighting, resend-state gating (Request backoff, Response budget, Event resend, Status coalescing/staleness), and origin bias — with capacity-constrained packing to maximize the value of each scarce transmission opportunity.
+**Rate-limited / capacity-constrained modalities.** Examples: acoustic links and satellite links
+with strict airtime budgets. Opportunities are infrequent and payload budgets are small, so score
+density and fragmentation choices materially affect which novel information fits.
 
-**High-throughput / effectively-unlimited modalities.** Examples: LAN, IP/MQTT, many short-range radio configurations. Characteristics: transmission opportunities occur at high rates, and per-transmission payload limits are large or effectively absent for M4P's purposes. Scheduling approach: Simplified binary-eligibility scheduling where packets that pass gating checks (modality mask, resend rules, forwarding history) are included in the transmission, up to an implementation-defined per-transmission packet cap.
+**High-throughput / effectively-unlimited modalities.** Examples: LAN, WAN, and many short-range
+radio configurations. Opportunities occur more often and budgets are larger, but records still use
+the same eligibility, novelty, spacing, and score-density model. Link class changes the recommended
+novelty admission floor; it does not select a separate resend policy.
 
 ### 9.6 Scheduling Modes
 
@@ -264,30 +294,40 @@ M4P distinguishes between two classes of modalities for scheduling purposes. The
 **Rate-limited scheduling.** For rate-limited or capacity-constrained modalities, nodes SHOULD:
 
 1. Discard expired packets.
-2. Gather eligible packets for the modality based on: modality mask, forwarding history and one-hop semantics, and per-modality resend rules (Request backoff, Response budget, Event resend, Status coalescing).
-3. Compute an effective priority for each candidate that respects class bias defaults and base priority (or override), and MAY factor in age, internal/external origin, Event age, Status variant staleness, Request ingress recency (early-hop spread urgency for Request packets only), and dispersion-aware bridge scoring ([Section 9.10](#910-dispersion-aware-scheduling-mesh-modalities)).
-4. Sort candidates by effective priority (highest first).
-5. Greedily pack packets into the Transmission up to the available capacity, selecting the highest effective-priority packet that fits in the remaining capacity at each step.
-6. After sending, update per-modality state (send counts, last-sent timestamps, forwarding history).
+2. Gather records eligible for the DataLink adapter under the common hard filters and spacing
+   ladder.
+3. Estimate audience novelty as described in [Section 9.10](#910-knowledge-driven-scheduling) and
+   compute score density from effective priority, novelty, wire size, and applicable in-flight
+   boosts.
+4. Sort candidates by descending score density.
+5. Greedily pack records into the Transmission up to the available capacity, using fragmentation
+   where permitted.
+6. After a successful send result, update per-DataLink-adapter send state and the relevant
+   peer-holding estimates.
 
 **High-throughput scheduling.** For high-throughput modalities, nodes MAY use a simplified scheduling approach:
 
 1. Discard expired packets.
-2. Build the candidate set for the modality and apply gating checks (modality mask, forwarding-history/rebroadcast rules, Request backoff, Response resend budget, Event resend, and Status coalescing eligibility).
-3. Order eligible candidates primarily by effective priority; implementations MAY use lightweight class/origin bucketing as an approximation if it preserves the intended behavior that high-priority packets can outrank lower-priority packets across classes.
+2. Build the candidate set for the DataLink adapter and apply the same common hard filters,
+   audience novelty, and spacing ladder.
+3. Order eligible candidates by score density.
 4. Include candidates up to an implementation-defined per-transmission packet cap.
 
-Because high-throughput links are capacity-rich, implementations MAY use simplified ranking approximations instead of full global sorting, provided priority semantics are preserved.
+Because high-throughput links are capacity-rich, implementations MAY use a simplified stable
+approximation to global sorting, provided effective priority, novelty, and wire-size ordering are
+preserved.
 
 ### 9.7 Link Opportunities and Transmission Building
 
 When a DataLink signals a transmission opportunity with an available payload budget (see [Section 10](#10-datalink-abstraction)), the node builds a Transmission by:
 
 1. Discarding any expired packets from the message store.
-2. Identifying candidate packets that are eligible for transmission on the available modality (per modality mask, forwarding history, and resend rules).
+2. Identifying records eligible for transmission on that DataLink adapter under the common hard
+   filters, spacing ladder, and novelty admission floor.
 3. Selecting and packing packets into the Transmission according to the priority and scheduling rules defined in [Section 9.4](#94-priority-and-scheduling) through [Section 9.6](#96-scheduling-modes). If a candidate packet exceeds the remaining transmission budget but is eligible for fragmentation (see [Section 8.3](#83-fragmentation-behavior)), the node MAY fragment it and pack as many resulting fragments as fit. Fragmentation eligibility depends on the authentication configuration: when `AUTH_TAG_SIZE == 00`, any complete message or received fragment may be fragmented or re-fragmented; when `AUTH_TAG_SIZE != 00`, only nodes possessing the PSK may fragment or re-fragment ([Section 8.3.5](#835-encryption-interaction)). See [Section 9.7.1](#971-fragment-size-selection) for fragment size guidance.
 4. Transmitting via the DataLink.
-5. Updating per-modality send counts, last-sent timestamps, and forwarding history for all transmitted packets.
+5. On successful send confirmation, updating per-DataLink-adapter send state and peer-holding
+   estimates for all transmitted records.
 
 Figure 7 illustrates this pipeline as a flow chart, showing the scheduling loop from the DataLink opportunity signal through candidate selection, effective-priority scoring, capacity-constrained packing, and handoff to the DataLink.
 
@@ -350,7 +390,10 @@ Implementations MAY use smaller fragment sizes to improve transmission packing d
 
 #### 9.7.2 Worked Example: Mixed-Origin Transmission Packing
 
-The message store is a **unified pool** containing all packets awaiting delivery or forwarding, regardless of origin or class. Locally-originated packets (from hosted clients) and externally-received packets (forwarded on behalf of other nodes) reside in the same store and compete for space in each transmission through the same scheduling pipeline, subject to priority ordering (including the internal-over-external bias defined in [Section 9.4](#94-priority-and-scheduling)). The scheduler does not maintain separate queues for local vs. forwarded traffic — it treats the store as a single priority-ordered pool that feeds each transmission opportunity.
+The message store is a **unified pool** containing all packets awaiting delivery or forwarding,
+regardless of origin or class. Locally originated and externally received records compete through
+the same score-density and packing pipeline; there is no separate local-origin queue or score
+multiplier.
 
 The following example illustrates how the transmission building pipeline ([Section 9.7](#97-link-opportunities-and-transmission-building) steps 1–5) selects and packs packets from this unified message store into a single transmission on a rate-limited acoustic link.
 
@@ -358,32 +401,29 @@ The following example illustrates how the transmission building pipeline ([Secti
 
 | # | Packet | Class | Source | Origin | Serialized Size | Effective Priority |
 |---|--------------------------|-------------|-------------|----------------|---------------|------------------|
-| 1 | NC_NODE_SUMMARY | Network Control | Node A (NA 5) | Internal | 18 B | Highest default class bias |
+| 1 | NC_NODE_SUMMARY | Network Control | Node A (NA 5) | Internal | 18 B | Priority 80 |
 | 2 | Emergency Stop (type 10,001) | Request | CA 99 → CA 13 | External (forwarded) | 14 B | Priority 240 (Request) |
 | 3 | Leak Alarm Event (type 8,120) | Event | CA 77 | External (forwarded) | 10 B | Priority 190 (Event) |
 | 4 | Navigation Status (type 100) | Status | CA 12 | Internal | 22 B | Priority 128 (Status) |
 | 5 | Health Status (type 200) | Status | CA 45 | External (forwarded) | 16 B | Priority 80 (Status) |
 | 6 | Sensor Telemetry (type 300) | Status | CA 13 | Internal | 30 B | Priority 64 (Status) |
 
-**Transmission building.** The acoustic DataLink signals a transmission opportunity with a 64-byte budget. The scheduler executes:
+For a compact arithmetic example, assume all six records have novelty `1.0`, no in-flight boost,
+and no fragmentation is useful in the final two bytes. The acoustic DataLink signals a
+transmission opportunity with a 64-byte budget:
 
 1. **Purge expired:** All packets are within TTL. No packets removed.
-2. **Filter eligible:** All six packets pass modality mask and resend checks for acoustic.
-3. **Priority sort:** Sorted by effective priority with class bias and other tie-breakers:
-   - Packet 1: NC (highest default class bias)
-   - Packet 2: Request (priority 240)
-   - Packet 3: Event (priority 190)
-   - Packet 4: Status (priority 128, internal)
-   - Packet 5: Status (priority 80, external)
-   - Packet 6: Status (priority 64, internal — but lower base priority than Packet 5)
+2. **Filter eligible:** All six packets pass the common hard filters.
+3. **Score-density sort:** With equal novelty, `priority / size` orders the packets as 3, 2, 4,
+   5, 1, then 6. Origin and class add no multiplier.
 4. **Pack** (64-byte budget):
-   - Packet 1 (18 B): fits → add. Remaining: 46 B.
-   - Packet 2 (14 B): fits → add. Remaining: 32 B.
-   - Packet 3 (10 B): fits → add. Remaining: 22 B.
-   - Packet 4 (22 B): fits → add. Remaining: 0 B.
-   - Packet 5 (16 B): does not fit (budget exhausted) → skip.
-   - Packet 6 (30 B): does not fit (budget exhausted) → skip.
-5. **Transmit:** The resulting transmission contains 4 packets totaling 64 bytes — an NC message, a forwarded Request, a forwarded Event, and a locally-originated Status — packed into a single 64-byte acoustic send.
+   - Packet 3 (10 B): fits → add. Remaining: 54 B.
+   - Packet 2 (14 B): fits → add. Remaining: 40 B.
+   - Packet 4 (22 B): fits → add. Remaining: 18 B.
+   - Packet 5 (16 B): fits → add. Remaining: 2 B.
+   - Packets 1 and 6 do not fit the remainder.
+5. **Transmit:** The resulting transmission contains four packets totaling 62 bytes. A class does
+   not jump the order; the NC catalog priority participates in the same density calculation.
 
 #### 9.7.3 Worked Example: Fragmentation During Packing
 
@@ -393,22 +433,25 @@ The following example extends the transmission building pipeline to illustrate f
 
 | # | Packet | Class | Serialized Size | Effective Priority |
 |---|--------|-------|-----------------|--------------------|
-| 1 | NC_NODE_SUMMARY | Network Control | 18 B | Highest default class bias |
+| 1 | NC_NODE_SUMMARY | Network Control | 18 B | Priority 80 |
 | 2 | Sensor Report (type 400) | Status | 90 B | Priority 128 (Status) |
 | 3 | Health Status (type 200) | Status | 14 B | Priority 80 (Status) |
 
-**Transmission building** (64-byte budget):
+Assume equal novelty and no in-flight boost. **Transmission building** for the 64-byte budget is:
 
 1. **Purge expired:** All packets are within TTL.
-2. **Filter eligible:** All three packets pass modality mask and resend checks.
-3. **Priority sort:** Packet 1 (NC, highest default class bias), then Packet 2 (Status, priority 128), then Packet 3 (Status, priority 80).
+2. **Filter eligible:** All three packets pass the common hard filters.
+3. **Score-density sort:** Packet 3, then Packet 1, then Packet 2.
 4. **Pack:**
-   - Packet 1 (18 B): fits → add. Remaining: 46 B.
-   - Packet 2 (90 B): does not fit (90 > 46). Eligible for fragmentation → fragment to remaining budget. Fragment 0: `offset=0`, 44 B payload (46 B budget − 2 B fragment header), `end=0` → add. Remaining: 0 B.
-   - Packet 3 (14 B): does not fit (budget exhausted) → skip.
-5. **Transmit:** The transmission contains 2 packets totaling 64 bytes: one NC message and one fragment of the Sensor Report.
+   - Packet 3 (14 B): fits → add. Remaining: 50 B.
+   - Packet 1 (18 B): fits → add. Remaining: 32 B.
+   - Packet 2 (90 B): does not fit and may use the remaining budget through permitted
+     fragmentation.
+5. **Transmit:** The transmission contains the Health Status, the NC summary, and the first
+   feasible Sensor Report fragment.
 
-The unfragmented Sensor Report (90 B) remains in the message store. On the next transmission opportunity, the remaining bytes (`offset=44`, 46 B payload, `end=1`) can be sent — along with Packet 3 if budget permits. An implementation that prioritizes fragment completion MAY boost the remaining fragment's effective priority to accelerate reassembly at the destination.
+The Sensor Report remains retained. On later opportunities, fragment-completion state may boost
+its remaining fragments as described in [Section 9.4](#94-priority-and-scheduling).
 
 ### 9.8 Forwarding Semantics
 
@@ -418,16 +461,24 @@ The unfragmented Sensor Report (90 B) remains in the message store. On the next 
 
 The destination value `0` denotes broadcast. Broadcast is used for Network Control traffic and for Status and Event messages. Requests and Responses use directed (unicast or group) addressing; broadcast is not applicable to request/response exchanges.
 
-Broadcast packets MUST obey TTL expiration and MIID deduplication. Nodes SHOULD forward each broadcast MIID at most once per DataLink adapter instance and MUST respect one-hop semantics when `ttl_override = 0`.
+Broadcast packets MUST obey TTL expiration, MIID deduplication, the common spacing ladder, and
+one-hop semantics when `ttl_override = 0`. A retained broadcast record MAY be transmitted more
+than once on a DataLink adapter while it remains novel to the audience.
 
 Broadcast forwarding policy MAY depend on modality, link cost, and local constraints. Implementations SHOULD keep TTLs short for broadcast packets on constrained links.
 
 #### 9.8.2 Infrastructure and Mesh Modality Forwarding
 The transport applies different forwarding policies to infrastructure and mesh modalities based on their delivery characteristics (defined in [Section 2.6](#26-core-concepts-and-terminology)).
 
-**Infrastructure modalities.** [BEHAVIORAL] Nodes MUST NOT rebroadcast a packet on the same infrastructure link from which it was received. All peers on that link already received the original transmission; rebroadcasting produces redundant traffic that scales as O(N²) across all nodes on the link. For Status messages, each new value SHOULD be sent at most once per infrastructure modality until superseded by a newer value or expired. Event messages are retained and scheduled per message instance until expired.
+**Infrastructure modalities.** [BEHAVIORAL] A node MUST NOT immediately rebroadcast a packet on
+the same infrastructure DataLink adapter from which it was received while that observation covers
+the current audience. A newly observed or restarted peer reopens the audience, allowing retained
+state to catch the peer up. Status and Event records then follow the same novelty and spacing rules
+as other records until supersession or expiry.
 
-**Mesh modalities.** [BEHAVIORAL] Nodes MAY rebroadcast packets received on mesh modalities, subject to TTL, one-hop semantics (when `ttl_override = 0`), forwarding history, and MIID deduplication. Mesh rebroadcasting extends the reach of packets beyond the originator's direct range. All per-modality statistics (last-sent time, send count, Response resend budget) are local to the node.
+**Mesh modalities.** [BEHAVIORAL] Nodes MAY rebroadcast packets received on mesh modalities,
+subject to TTL, one-hop semantics, MIID deduplication, peer-holding evidence, the spacing ladder,
+and the novelty admission floor. Per-link send state is local to the node.
 
 **Cross-modality forwarding.** Packets received on any modality SHOULD be forwarded on other modalities (both infrastructure and mesh) subject to normal TTL, deduplication, and modality mask constraints. The value of store-carry-forward is moving packets *across* modalities — a message received acoustically while submerged may be forwarded over LAN when the vehicle surfaces.
 
@@ -469,34 +520,52 @@ The following protocol-intrinsic properties enforce version-lock — a change to
 - **CTE encoding.** The Compact Type Encoding scheme ([Section 4.2](#42-compact-type-encoding-cte)) reserves values 32,768+ for future extended encoding that current parsers cannot decode.
 - **Cryptographic primitives.** The payload cipher (AES-256-CTR) and authentication (AES-CMAC) are fixed per version.
 
-### 9.10 Dispersion-Aware Scheduling (Mesh Modalities)
+### 9.10 Knowledge-Driven Scheduling {#910-knowledge-driven-scheduling}
 
-**[GUIDANCE — EXPERIMENTAL]**
+**[GUIDANCE]**
 
-> **EXPERIMENTAL** — Dispersion-aware scheduling is an optional optimization for constrained mesh links. It is not required for interoperability and is expected to evolve with implementation experience.
+M4P is an estimator rather than a path router. At each opportunity, the useful local question is:
+"which retained records are the reachable audience least likely to hold?" An implementation can
+answer that question with two separate local beliefs:
 
-Traditional network protocols optimize for routing: "what is the best path for this packet to reach its destination?" Because M4P operates without global routing tables or topology knowledge, that question has no answer. On rate-limited mesh modalities (acoustic links in particular), the relevant question becomes: "given this one scarce transmission opportunity, what is the most valuable thing I can send to add the most new information to my local neighborhood of the network?" Nodes MAY apply dispersion-aware scoring to answer this question — estimating which messages nearby peers have already received, prioritizing packets they are least likely to have seen, and reducing redundant rebroadcasts while preserving robust multi-hop propagation. These estimates can be informed by application-layer context such as estimated peer positions and data-link evidence such as SNR or signal strength.
+1. **Peer holding:** for each retained record and peer, an estimate of how much useful content that
+   peer holds, plus a distinct confirmed floor established only by direct evidence.
+2. **Channel reachability:** for each peer and DataLink adapter, an estimate of how likely a send is
+   to reach that peer now.
 
-The model is conceptual:
+These beliefs are implementation guidance, not interoperable state. They MUST NOT be transmitted
+as another node's beliefs. The demand-state record in [Section 11.11](#1111-demand-state-record) is
+different: it is a normative statement by one requester host about its own outstanding demand.
 
-1. Estimate link reachability between peers using local evidence (and optional context hints).
-2. Estimate, per peer and message, the likelihood that the peer has already seen the message.
-3. Derive a bridge value that approximates expected new reach if this node transmits the message.
-4. Combine bridge value with base scheduling factors (priority, class bias, resend state, size efficiency) when ranking candidates.
+Useful holding evidence includes receiving a whole record from a peer, receiving a duplicate from
+that peer, confirmed per-peer delivery feedback, and the sender's own successful transmissions
+weighted by the link's delivery evidence. Soft evidence may reduce estimated novelty but SHOULD
+retain residual uncertainty. Only confirmed evidence should terminate directed Request or Response
+carriage. A broadcast record remains bounded by its TTL and the admission floor rather than by
+soft estimated coverage.
 
-Implementations SHOULD use a two-pass packing strategy on constrained links:
+For a candidate record `m`, a useful conceptual novelty estimate is:
 
-1. **Deterministic pass:** greedily pack highest-value eligible candidates.
-2. **Safety pass:** apply bounded probabilistic inclusion for non-selected candidates to avoid total suppression under model uncertainty.
+```text
+novelty(m) = sum over audience peers v of
+             reachability(v) * carrier_weight(v, m) * (1 - holding(v, m))
+```
 
-The following invariants apply:
+Destination hosts receive full carrier weight for directed traffic; relays may receive a smaller
+nonzero weight. Broadcast traffic uses equal carrier weight. Dividing
+`effective_priority * novelty` by wire size gives the score-density model in [Section 9.4](#94-priority-and-scheduling).
 
-- Dispersion-aware scheduling changes scheduler behavior only; it does not change wire formats.
-- Nodes that do not implement this optimization remain fully interoperable and continue to use base scheduling rules.
-- Network Control traffic remains exempt from dispersion-based suppression.
-- TTL expiry and per-modality minimum send intervals remain hard constraints.
-- Missing or stale evidence should bias toward relaying more, not less.
+The following guidance keeps the estimator conservative:
 
-When dispersion-aware scheduling is enabled, Request resend backoff MAY be integrated as a continuous scoring/selection decay rather than a binary eligibility gate, provided the base rate-limiting intent of [Section 9.3.1](#931-request-resend) is preserved.
+- Missing evidence biases toward more forwarding, never suppression.
+- The passage of time may lower a reachability estimate, but MUST NOT erase a confirmed holding
+  fact.
+- Evidence that a peer lacks a record may reopen that record's spacing state immediately.
+- Unknown or absent peers are treated as novel enough to bootstrap discovery rather than as
+  already covered.
+- Network Control records whose forwarding scope is not None use the same novelty and spacing
+  model as application records.
+- Selection remains deterministic for fixed state and opportunities; model uncertainty does not
+  require random inclusion.
 
 ---

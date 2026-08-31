@@ -135,11 +135,16 @@ See [Appendix C](#appendix-c-application-integration-guidelines-non-normative) f
 
 ### 10.5 Scheduling Inputs
 
-**[GUIDANCE — EXPERIMENTAL]**
+**[GUIDANCE]**
 
-> **EXPERIMENTAL** — Scheduling inputs support the dispersion-aware scheduling model ([Section 9.10](#910-dispersion-aware-scheduling-mesh-modalities)), which is not yet fully implemented. This section is expected to evolve alongside it.
+*PSFI-1347 knowledge-model update drafted by a Codex agent, 2026-08-31.*
 
-The dispersion-aware scheduling model ([Section 9.10](#910-dispersion-aware-scheduling-mesh-modalities)) benefits from optional inputs beyond the minimum data-plane contract. These inputs arrive from two sources — the application layer (context hints) and the data link layer (evidence plane) — and are consumed locally by the transport's scheduling logic. Neither source modifies on-wire formats, affects interoperability, or is required for protocol correctness. The transport MUST function correctly when no scheduling inputs are provided.
+The knowledge-driven scheduling model ([Section 9.10](#910-knowledge-driven-scheduling)) can
+benefit from optional inputs beyond the minimum data-plane contract. These inputs arrive from two
+sources — the application layer (context hints) and the data link layer (evidence plane) — and are
+consumed locally by scheduling logic. Neither source modifies on-wire formats, affects
+interoperability, or is required for protocol correctness. The transport MUST function correctly
+when no optional scheduling inputs are provided.
 
 **Application context hints.** The application MAY provide environmental context that improves scheduling efficiency on constrained modalities. Context hints follow the same integration pattern as data link adaptation ([Section 10.4](#104-data-link-adaptation)): the application evaluates operational context that M4P does not possess and provides relevant parameters to the transport. Inputs include self-position and peer position estimates (with uncertainty and timestamps), NodeUID-to-Node-Address identity mapping, and propagation model parameters (reliable range, maximum range). Position hints may originate from any source — USBL ranging, GPS-at-surface telemetry, INS dead reckoning, mission-planned waypoints, or peer status message payloads.
 
