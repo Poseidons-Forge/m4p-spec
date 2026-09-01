@@ -392,7 +392,7 @@ The `AUTH_TAG_SIZE` field MUST only be set to a non-zero value when the M4P payl
 
 ### 5.8 Transmission Encoding
 
-A Transmission is the unit of data exchanged between nodes over a DataLink. It consists of the transmitting node's address followed by one or more serialized packets.
+A Transmission is the unit of data exchanged between nodes over a DataLink. On a link-managed DataLink it consists of the transmitting node's address followed by one or more serialized packets.
 
 ```text
 +-----------------------------------------------+
@@ -404,7 +404,28 @@ A Transmission is the unit of data exchanged between nodes over a DataLink. It c
 
 The `node_address_sender` field contains the Node Address of the transmitting node, encoded as an 8-bit or 16-bit unsigned integer matching the network-wide addressing mode. The remainder of the Transmission is a concatenation of serialized M4P packets (headers + payloads as defined in Sections [5.1](#51-status-packet-header)–[5.5](#55-network-control-packet-headers)). The packets within a single Transmission may belong to different message classes, originate from different source clients, target different destinations, and include both locally-originated and forwarded packets.
 
-**Parsing.** The receiving node reads the `node_address_sender`, then parses packets sequentially — the `message_type_id` CTE encoding and `payload_length` field provide the information needed to determine packet boundaries. Any trailing bytes insufficient to form a valid packet header MUST be discarded. Implementations SHOULD NOT pad Transmissions with trailing bytes; if padding is required by the DataLink layer, the adapter MUST strip it before delivering the Transmission to the transport.
+<!-- Drafted by a Codex agent. -->
+**M4P-managed TDMA receipt envelope.** Every Transmission on an M4P-managed TDMA link MUST place the following self-delimiting receipt envelope immediately after `node_address_sender`. A link-managed DataLink MUST NOT use this envelope.
+
+```text
++-----------------------------------------------+
+| node_address_sender    (NA: 8b or 16b)        |
++-----------------------------------------------+
+| schedule_hash (bits 7:1) | bitmap_size (bit 0)|
++-----------------------------------------------+
+| heard_bitmap            (8b or 16b)           |
++-----------------------------------------------+
+| packet₁ || packet₂ || ... || packetₙ          |
++-----------------------------------------------+
+```
+
+`schedule_hash` is the seven-bit whole-schedule hash defined in [Section 11.10.8](#11108-tdma-receipt-evidence). `bitmap_size = 0` selects one bitmap byte and MUST be used for schedules of at most eight participants. `bitmap_size = 1` selects two bitmap bytes, encoded in network byte order, and MUST be used for schedules of nine through sixteen participants. Bit `i` of `heard_bitmap`, with bit 0 the least-significant bit, corresponds to participant slot index `i`; the sender's own bit is unused. The size bit determines the packet-stream offset without requiring the receiver's local schedule to agree.
+
+For example, schedule hash `0x35` with an eight-participant bitmap whose bits 2, 5, and 7 are set encodes the two envelope bytes `6a a4`: `(0x35 << 1) | 0` followed by `0b1010_0100`. The envelope therefore adds two bytes for schedules of up to eight participants and three bytes for schedules of nine through sixteen participants.
+
+An M4P-managed TDMA Transmission MAY contain no packets when it reports at least one previously unreported set receipt bit. This receipt-only form ends immediately after the bitmap. Other Transmissions retain the packet requirements above.
+
+**Parsing.** The receiving node reads the `node_address_sender`; on an M4P-managed TDMA link it then reads the packed envelope byte and the bitmap length selected by its size bit. It subsequently parses packets sequentially — the `message_type_id` CTE encoding and `payload_length` field provide the information needed to determine packet boundaries. During the fleet cutover, an M4P-managed TDMA receiver MUST treat a pre-envelope packet-only Transmission as a malformed transmission, count one decode failure, and drop the entire Transmission. Link-managed parsing is unchanged. Any trailing bytes insufficient to form a valid packet header MUST be discarded. Implementations SHOULD NOT pad Transmissions with trailing bytes; if padding is required by the DataLink layer, the adapter MUST strip it before delivering the Transmission to the transport.
 
 **DataLink adaptation.** The encoding above is the canonical Transmission wire format. A DataLink adapter MAY omit the `node_address_sender` prefix when the underlying link protocol natively provides the sender's identity (e.g., an acoustic modem's source address field). In this case, the receiving adapter MUST reconstruct the full Transmission by prepending the `node_address_sender` derived from link-layer metadata before delivering it to the transport. This optimization is encapsulated within the DataLink adapter pair — the transport layer always receives the canonical format. See [Section 10.3](#103-transmission-metadata) for adapter responsibilities.
 

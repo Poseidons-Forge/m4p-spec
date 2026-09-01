@@ -1401,4 +1401,30 @@ This reconciliation is self-limiting: once the stale node updates its schedule, 
 
 **Departure-case convergence.** When divergence is caused by a missed departure (claim expiration), nodes may disagree on whether a departed node's claim is still active because they hold different `claim_renewal_timestamp` values for that peer. NC_TDMA_SCHEDULE exchange cannot resolve this disagreement — each node's local expiration computation is based on the last renewal it received. Convergence relies on claim expiration firing independently on each node, bounded by `expiration_interval`. Explicit departure signaling ([Section 13.4](#134-graceful-tdma-departure)) is a future feature that would eliminate this convergence gap.
 
+#### 11.10.8 TDMA Receipt Evidence
+
+**[BEHAVIORAL]**
+
+<!-- Drafted by a Codex agent. -->
+Every M4P-managed TDMA Transmission carries the receipt envelope defined in [Section 5.8](#58-transmission-encoding). Receipt envelopes MUST NOT be enabled on link-managed links, including links whose adapter independently implements TDMA.
+
+Each receiver maintains a per-link opportunity table keyed by the UTC-derived `(cycle, slot)` identity from [Section 11.10.3](#11103-cycle-geometry). A successfully sent local Transmission enters the table when its `SendTransmission` action is emitted; a received Transmission enters only after the complete packet stream parses and its sender matches the locally expected owner of that physical opportunity. Entries identify each whole record and each fragment byte range carried by the opportunity. An entry expires one TDMA cycle after its opportunity. Any change to the ordered participant list, slot duration, slots per cycle, or guard time MUST clear the table before receipt processing continues.
+
+For a Transmission by participant slot index `s`, bitmap bit `i` describes the latest physical opportunity owned by participant slot index `i` that occurred strictly before `s`'s current opportunity in the continuous round-robin schedule. The mapping crosses cycle boundaries: the first participant's bitmap refers to the preceding round, while a middle participant's bitmap combines earlier participants from the current round with later participants from the preceding round. The sender's own bit is unused.
+
+A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. A whole-schedule mismatch MUST increment a per-link counter and emit an engineering event. Sender-slot mismatch retains the reconciliation behavior in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
+
+For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is only a failure sample for the directed pairwise estimator and an input that voids any predicted receipt for that opportunity.
+
+When receipt-only transmissions are enabled, a node that has no packet candidate but holds an unreported set bit SHOULD emit the receipt-only form in its next assigned opportunity. Implementations SHOULD enable this behavior by default. A set bit becomes reported only after the containing Transmission receives a successful send result; busy, failed, and timed-out sends leave it pending.
+
+**Whole-schedule hash.** The canonical hash input is the domain separator `M4P-TDMA-SCHEDULE-V1` followed by a zero byte, participant count as big-endian `u16`, each ordered participant NA as big-endian `u16`, slot duration in milliseconds as big-endian `u64`, slots per cycle as big-endian `u32`, and guard duration in milliseconds as big-endian `u64`. Compute SHA-256 over that byte string and use the low seven bits of the first digest byte.
+
+Shared test vectors:
+
+| Ordered participants | Slot duration | Slots/cycle | Guard | Seven-bit hash |
+|---|---:|---:|---:|---:|
+| `[1, 7, 42]` | 30,000 ms | 8 | 2,000 ms | 109 (`0x6d`) |
+| `[0x0102, 0x1001, 0x7ffe, 0xff00]` | 12,500 ms | 16 | 750 ms | 68 (`0x44`) |
+
 ---

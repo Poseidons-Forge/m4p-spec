@@ -186,6 +186,7 @@ including commercial, under the following terms:
     - [11.9.4 Accelerated Client Address Convergence](#1194-accelerated-client-address-convergence)
     - [11.9.5 Worked Example: Network Bootstrap Sequence (Non-Normative)](#1195-worked-example-network-bootstrap-sequence-non-normative)
   - [11.10 TDMA Slot Allocation](#1110-tdma-slot-allocation)
+    - [11.10.8 TDMA Receipt Evidence](#11108-tdma-receipt-evidence)
   - [11.11 Demand-State Record](#1111-demand-state-record)
     - [11.11.1 Payload Encoding](#11111-payload-encoding)
     - [11.11.2 Authorship, Validation, and Supersession](#11112-authorship-validation-and-supersession)
