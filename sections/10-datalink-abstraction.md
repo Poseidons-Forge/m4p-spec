@@ -16,143 +16,178 @@ including commercial, under the following terms:
 
 **[GUIDANCE + BEHAVIORAL]**
 
-The DataLink abstraction defines the boundary between the M4P transport layer and the physical communication layer.
+<!-- PSFI-1399 rewrite drafted by a Codex agent. -->
 
-### 10.1 DataLink Interface
+The DataLink abstraction is the fact boundary between M4P and a physical or
+link-layer implementation. A DataLink adapter reports facts about its medium;
+the M4P core alone reduces those facts into channel and message-holding belief.
+The adapter MUST NOT compute or report reachability estimates, inferred message
+holding, forwarding decisions, or any other belief.
 
-**[BEHAVIORAL]**
-
-Each data link modality (acoustic modem, radio, satellite terminal, LAN interface, etc.) is integrated with M4P through a DataLink adapter. The adapter exposes two pieces of information to the transport layer:
-
-1. **Transmission opportunity**: An indication that the link is ready to send data ("I can send now" or "I cannot send now").
-2. **Payload budget**: The maximum number of bytes the link can carry in the current transmission opportunity.
-
-The adapter also delivers received transmissions to the transport for processing. The transport registers a callback with each adapter for inbound data delivery.
-
-In link-managed mode ([Section 10.4.1](#1041-link-managed-mode-default)), all modality-specific mechanics — waveform selection, duty-cycle management, MAC protocol behavior, modem command interfaces, and physical-layer configuration — remain encapsulated within the DataLink adapter. In M4P-managed TDMA mode ([Section 10.4.2](#1042-m4p-managed-tdma-mode)), TDMA participant convergence and slot assignment are protocol-defined; the adapter remains responsible for the physical send/receive path. In both modes, the M4P transport layer MUST NOT depend on any modality-specific behavior beyond the transmission opportunity and payload budget interface.
-
-**Boundary asymmetry.** The DataLink abstraction is intentionally asymmetric with respect to fleet-wide topology. In link-managed mode, the transport does not push fleet membership information down to adapters; adaptive data link behaviors that depend on fleet composition are managed by the application layer (see [Section 10.4](#104-data-link-adaptation)). For M4P-managed TDMA links, the node runtime provides derived schedule parameters to the adapter rather than raw network-control packets.
-
-**[GUIDANCE] Extended adapter interface.** The two-signal interface (transmission opportunity, payload budget) is the required contract. Adapters MAY additionally provide link quality or congestion metrics that the transport can use for scheduling and priority decisions. Implementations will typically expose richer scheduling metadata (timing constraints, rate characteristics, capability declarations) and may support modality-specific delivery optimizations (such as targeted delivery to a known peer's link-layer address on IP-based modalities). These implementation choices do not affect interoperability — the on-wire format of Transmissions is identical regardless of the adapter's internal interface. An adapter that provides only the required interface is fully conformant; the transport MUST function correctly without extended metadata.
-
-**Non-networking capabilities.** The DataLink abstraction does not prevent applications or adapters from using hardware capabilities that fall outside M4P's networking scope. When a capability is networking-related (e.g., link-quality metrics that inform routing), it SHOULD be integrated into the M4P transport layer so all nodes benefit. When a capability falls outside the networking domain (e.g., USBL positioning from an acoustic modem), the DataLink adapter is free to expose it directly to applications through its own interfaces, independent of M4P.
-
-Figure 8 illustrates the DataLink abstraction boundary with an expanded view of the adapter layer, showing how the M4P transport hands Transmissions to the boundary and how modality-specific adapters implement the connection to physical hardware.
-
-```mermaid
----
-config:
-  theme: default
-  layout: elk
-  themeVariables:
-    background: '#ffffff'
----
-flowchart TD
-    subgraph transport["M4P Transport"]
-        direction LR
-        SCHED["Scheduler"] --> TXBUILD["TX Builder"] --> PSTORE["Packet Store"] --> PRIO["Priority / TTL"]
-    end
-
-    transport -->|"Transmissions"| BOUND
-
-    BOUND["DataLink Abstraction Boundary<br><i>Opportunity + Budget signals</i>"]:::boundary
-
-    BOUND --> ACO & LAN & RAD
-
-    ACO["<b>Acoustic Adapter</b><br>NMEA, waveform, duty cycle,<br>TDMA, MAC protocol"]
-    USBL["USBL Positioning<br><i>(bypasses M4P)</i>"]:::special
-    ACO ~~~ USBL
-    LAN["<b>LAN / MQTT</b><br>MQTT client, topic routing,<br>TLS encryption"]
-    RAD["<b>Radio Adapter</b><br>RF driver, COMSEC,<br>frequency management"]
-
-    classDef boundary fill:#5dade2,color:#2c3e50,stroke:#1a5276,stroke-width:3px
-    classDef special fill:#f8c471,color:#2c3e50,stroke:#f39c12,stroke-width:2px
-```
-
-**Figure 8 — DataLink Abstraction Boundary**
-
-### 10.2 Modality Classification
+### 10.1 DataLink Contract
 
 **[BEHAVIORAL]**
 
-Each DataLink adapter MUST declare whether it operates as an infrastructure or mesh modality (see [Section 2.6](#26-core-concepts-and-terminology)). The transport uses this classification to apply the appropriate forwarding policy ([Section 9.8.2](#982-infrastructure-and-mesh-modality-forwarding)). The classification is fixed for the lifetime of the adapter and reflects the link's delivery characteristics, not its physical layer technology.
+Every adapter registers one link instance and supplies the mandatory facets in
+the table below. Optional facets use a closed, typed vocabulary and MUST be
+declared at registration. An adapter that declares no optional facets is fully
+conformant; M4P then operates from receipt recency and the link descriptors.
 
-### 10.3 Transmission Metadata
+| Facet | Adapter fact | Declaration | Core consumer |
+| -- | -- | -- | -- |
+| Receipt (mandatory) | One complete canonical Transmission and its sender Node Address | none | E1/E2 holding evidence, presence, and the recency prior |
+| Send outcome (mandatory) | `sent`, `busy`, `failed`, or `timed_out` | none | ladder `n` on `sent`; directed pairwise `f` on a targeted `failed` or `timed_out`; diagnostics for broadcast failure |
+| Delivery confirmation | Which peers accepted the transmission | `delivery_confirmation`: `none`, `link_accepted`, or `delivered_to_peers` | E3 and pairwise success counts |
+| Reception quality | Any declared subset of `snr_db`, `pdsnr_db`, `rssi_dbm`, and `decode_confidence` on a receipt | `evidence_capabilities`: `reception_quality` with its field list | channel-prior curve |
+| Range | A measured range to a peer | `evidence_capabilities`: `range` | range table on the self row |
+| Peer receipt | A named peer acknowledged a named send or receive opportunity | `evidence_capabilities`: `peer_receipts` | E12 through the shared opportunity table |
+| Descriptors | Modality, class, addressing, scheduling mode, MAC management, operating envelope, collision domain, maximum transmission duration, and endpoint set | fixed registration or descriptor fields | selection of the applicable core rules |
+| Diagnostics and decode events | Any other adapter measurement or event | free-form observability API | observability only; never evidence |
 
-The canonical Transmission wire format and parsing rules are defined in [Section 5.8](#58-transmission-encoding). The DataLink adapter is responsible for delivering a complete Transmission — including the `node_address_sender` — to the transport layer on receive, and accepting one from the transport on send.
+An implementation MUST reject an unknown or malformed evidence capability at
+registration. It MUST ignore no declared vocabulary extension silently. Adding
+a new optional facet therefore requires a protocol revision and exactly one
+named reducer in the core. Values outside the closed reception-quality list,
+including velocity and Doppler measurements, are diagnostics rather than
+reception-quality evidence.
 
-When a DataLink adapter carries the sender NA out-of-band (as permitted by [Section 5.8](#58-transmission-encoding)), both the sending and receiving adapters for that modality MUST use the same convention. The sending adapter omits the `node_address_sender` prefix from the wire payload; the receiving adapter reconstructs it from link-layer metadata and delivers the canonical format to the transport. The transport layer is unaware of this optimization.
+The registration descriptors have these meanings:
 
-Evidence-plane metadata ([Section 10.5](#105-scheduling-inputs)), when provided alongside a received Transmission, is local API data and MUST NOT be forwarded to other nodes. Each node's evidence-plane observations are consumed locally by the transport's scheduling logic.
+- `operating_envelope` is `surface`, `subsurface`, or `both`. Its default is
+  `surface` for radio, LAN, WAN, and satellite links and `both` for acoustic
+  links. A link MAY override its modality default. It is an input to the peer
+  surface-state prior only; it is not reachability evidence.
+- `collision_domain` identifies link instances backed by one physical
+  opportunity domain. Absence means the link has no declared sibling.
+- `max_transmission_duration` is a positive integer number of milliseconds: the time needed to transmit
+  `max_transmission_bytes`, including turnaround. It is a fact about the medium,
+  not a slot request. The future TDMA slot-duration rule consumes this fact by
+  taking the maximum over participants; an adapter does not compute that rule.
+- The endpoint set of a unicast link is the set of endpoints the adapter can
+  currently address. It is an address-table fact, never a reachability claim.
 
-<!-- PSFI-1397 update drafted by a Codex agent. -->
-For a link-managed link registered with canonical modality `wan`, the transport MUST insert and consume the WAN receipt envelope from [Section 5.8](#58-transmission-encoding). An M4P-managed TDMA link uses the TDMA receipt envelope instead, regardless of modality. The adapter treats the complete canonical Transmission as opaque binary data; broker acceptance or another link-layer send outcome is not evidence that a peer received it. A `lan` adapter instead supplies its exact per-endpoint delivery outcomes as local evidence and MUST NOT add the WAN envelope. An `acoustic` link likewise MUST NOT add the WAN envelope; an M4P-managed TDMA acoustic link uses the TDMA receipt envelope.
+Registration protocol versions are deployment-wide contracts. A daemon MUST
+reject a registration below its minimum supported version. All adapters in a
+deployment MUST be upgraded and re-registered with the corresponding daemon.
 
-### 10.4 Data Link Adaptation
+### 10.2 Transmission and Opportunity Interface
+
+**[BEHAVIORAL]**
+
+For each physical send opportunity, the owner supplies a payload budget. In
+link-managed mode the adapter reports `LinkReady`; in M4P-managed TDMA mode the
+runtime derives the opportunity from the agreed schedule and directs the
+adapter. The core builds a complete canonical Transmission no larger than that
+budget and the adapter carries it as opaque bytes.
+
+The canonical Transmission wire format and parsing rules are defined in
+[Section 5.8](#58-transmission-encoding). The adapter MUST deliver the complete
+canonical form, including `node_address_sender`, on receive. When an underlying
+link carries the sender address out of band, both adapters for that link MAY
+omit the prefix on the physical medium, but the receiving adapter MUST restore
+it before reporting the Transmission to M4P.
+
+A received Transmission MAY carry a driver-chosen `opportunity_ref`, an
+unsigned 32-bit correlation value local to that link. The value names that
+receive opportunity for a later peer receipt. It is not the daemon's receive
+transmission id, because the daemon assigns that id only after the adapter's
+report.
+
+An adapter declaring `peer_receipts` MAY report
+`PeerReceipt { peer_node_address, subject }`. The subject is exactly one of:
+
+- a daemon-assigned transmission id previously sent on this link or a sibling
+  in the same collision domain; or
+- an `opportunity_ref` previously attached to a received Transmission on this
+  same link.
+
+The core MUST resolve the subject through its opportunity table and feed the
+referenced records to E12, the same reducer used by protocol receipt envelopes.
+A whole record is confirmed immediately. A fragmented record accumulates only
+the byte ranges carried by referenced opportunities and is confirmed only when
+those ranges cover the complete retained payload. An unknown, expired, or
+malformed subject MUST be counted and dropped and MUST NOT mutate belief.
+
+Evidence-plane fields and correlation values are local API data. They MUST NOT
+be encoded into an M4P packet or forwarded to another node. The only receipt
+facts sent on an M4P DataLink are the protocol-owned transmission envelopes in
+[Section 5.8](#58-transmission-encoding).
+
+### 10.3 Send-Outcome Semantics
+
+**[BEHAVIORAL]**
+
+`sent` means that the link accepted the bytes: modem transmission completed,
+broker publication completed, an endpoint POST completed, or a mobile-originated
+message entered its queue. It MUST NOT mean or imply peer delivery. Peer
+delivery requires delivery confirmation or receipt evidence.
+
+Every `sent` outcome increments the opportunity's spacing-ladder send count
+`n`. A `failed` or `timed_out` outcome for a targeted send increments the
+directed pairwise failure count `f`. A broadcast failure has no sound peer to
+which a failure can be assigned and is therefore diagnostics only. `busy`
+declines the opportunity and is neither a send nor peer evidence.
+
+### 10.4 MAC Management and Collision Domains
 
 **[BEHAVIORAL + GUIDANCE]**
 
-M4P supports two MAC-management modes at the DataLink boundary. A link instance MUST operate in exactly one mode for its lifetime (unless explicitly re-registered with a different mode). MAC management mode is configured per-link, not per-modality — two links on the same modality (e.g., two acoustic modems on different frequencies) MAY use different modes.
+A link instance uses exactly one MAC-management mode for its registered
+lifetime:
 
-The selected mode determines who owns transmission-opportunity timing:
+- **Link-managed.** The adapter owns waveform, contention, duty cycle, and
+  transmission-opportunity timing. M4P assumes no particular MAC algorithm.
+- **M4P-managed TDMA.** Participant convergence and slot assignment follow
+  [Section 11.10](#1110-tdma-slot-allocation). The runtime owns slot timing and
+  gives the adapter only the schedule information needed to time its local
+  slot. The adapter MUST NOT derive forwarding or belief from the schedule.
 
-- **Link-managed:** the adapter decides when opportunities exist.
-- **M4P-managed TDMA:** the M4P runtime decides when opportunities exist from NC-derived schedule state.
+All sibling links with the same non-empty `collision_domain` share one physical
+opportunity domain. The adapter layer MUST report `LinkReady` on exactly one
+sibling for each physical opportunity, and the core MUST NOT offer one slot to
+two siblings. Siblings share peer presence, peer-restart evidence, and
+message-holding cells. Their channel prior `p`, spacing ladder, receipt bitmap,
+directed pairwise history, and range table remain per-link. Thus a receipt on
+one sibling can confirm a record sent on another without merging their channel
+histories.
 
-In both modes, the adapter remains responsible for the physical send/receive path and payload budget constraints.
+For a link-managed link registered with canonical modality `wan`, the transport
+MUST insert and consume the WAN receipt envelope from
+[Section 5.8](#58-transmission-encoding). An M4P-managed TDMA link uses the TDMA
+receipt envelope instead, regardless of modality. Exactly one receipt-envelope
+form applies to a link. LAN and acoustic links MUST NOT use the WAN envelope.
 
-#### 10.4.1 Link-Managed Mode (default)
+Application or autonomy logic MAY tune adapter-owned settings such as waveform,
+power, or proprietary MAC policy. It MAY also supply context hints to the core.
+Neither path authorizes the adapter to consume fleet beliefs or to make M4P
+forwarding decisions.
 
-In link-managed mode, the DataLink adapter owns MAC behavior and transmission-opportunity timing. The adapter decides when to expose send opportunities and with what payload budget, and M4P treats the adapter as an opaque MAC implementation. This covers all MAC protocols: TDMA managed by the adapter, CSMA, listen-before-talk, proprietary scheduling, or no scheduling at all.
+### 10.5 Evidence Reduction and Conformance
 
-M4P MUST NOT assume any specific slotting, contention, or link-layer scheduler algorithm in this mode.
+**[BEHAVIORAL]**
 
-#### 10.4.2 M4P-Managed TDMA Mode
+Each optional facet has the single consumer named in [Section 10.1](#101-datalink-contract).
+The core MUST validate that reported evidence belongs to the facet and fields
+declared by the link. Missing, stale, or unusable optional evidence MUST bias
+toward more forwarding, never suppression.
 
-In M4P-managed TDMA mode, TDMA participation and schedule convergence are protocol-defined through `NC_TDMA_JOIN` and `NC_TDMA_SCHEDULE` ([Section 11.7.17](#11717-nc_tdma_join-32030), [Section 11.7.18](#11718-nc_tdma_schedule-32031)). Slot assignment MUST follow the deterministic algorithm in [Section 11.7.18.1](#117181-slot-assignment-algorithm).
+The following are hard conformance requirements:
 
-For this mode, send timing is driven by the M4P node runtime (daemon in the reference architecture), not by link-originated timing callbacks. The DataLink adapter functions as a transport pipe: it accepts `SendTransmission` directives and reports send outcomes.
+1. The driver reports measurements and protocol facts, never reachability,
+   message-holding belief, novelty, or a forwarding decision.
+2. Evidence-plane data is consumed only by the local core and is never
+   forwarded.
+3. A TDMA schedule is used by an adapter only for local opportunity timing.
+4. A link declaring no optional facet registers and forwards correctly from
+   mandatory receipts, send outcomes, descriptors, and recency-only priors.
+5. A declared facet is typed, validated, and reduced only by its named core
+   consumer; diagnostics never enter a belief reducer.
+6. Unknown capabilities fail registration, while unknown peer-receipt subjects
+   are counted and dropped without applying evidence.
 
-Implementations in this mode MUST treat TDMA timing as protocol-owned behavior. The adapter MUST NOT be the authoritative source of slot timing.
-
-All participants on a modality MUST use identical TDMA timing parameters (cycle duration, contention window, slot duration, guard time). These are deployment-configured, per-modality parameters — not negotiated over the wire. Divergent timing values produce incorrect slot computations and slot collisions.
-
-Before a local schedule exists, implementations MAY provide contention-window transmission opportunities so required NC bootstrap traffic (for example address claims and TDMA joins) can be emitted. After schedule assignment, transmission opportunities MUST follow assigned TDMA slots.
-
-#### 10.4.3 Complementary Application-Layer Adaptation
-
-Application/autonomy logic remains a complementary source of adaptation policy in both modes. M4P provides network-awareness signals; the application may apply mission-specific policy and issue adapter configuration updates that are outside interoperability scope.
-
-Deployments with domain-specific MAC requirements that M4P's TDMA model does not fit (hardware-managed TDMA, proprietary scheduling, multi-frequency coordination) SHOULD use link-managed mode with application-driven adaptation.
-
-[GUIDANCE] Common adaptation scenarios include:
-
-- **Fleet-aware tuning.** The application MAY tune modem parameters (power profile, waveform, channel coding, contention policy) based on current peer population and mission phase.
-- **Mode selection per link.** Deployments MAY use link-managed MAC on some links and M4P-managed TDMA on others, according to modality constraints and operational goals.
-- **Pre-provisioned timing.** Deployments with known fleet composition at launch SHOULD pre-configure baseline TDMA timing parameters; runtime behavior then handles unplanned topology change.
-- **Contention sizing policy.** For deployments using TDMA contention windows, the application MAY tune contention parameters to expected peer density and channel conditions.
-
-See [Appendix C](#appendix-c-application-integration-guidelines-non-normative) for concrete examples of both M4P-managed TDMA and application-managed adaptation.
-
-**Note:** DataLink adapter API shape (configuration commands, state machines, modem command protocols) remains implementation-specific and outside this protocol specification.
-
-### 10.5 Scheduling Inputs
-
-**[GUIDANCE]**
-
-*PSFI-1347 knowledge-model update drafted by a Codex agent, 2026-08-31.*
-
-The knowledge-driven scheduling model ([Section 9.10](#910-knowledge-driven-scheduling)) can
-benefit from optional inputs beyond the minimum data-plane contract. These inputs arrive from two
-sources — the application layer (context hints) and the data link layer (evidence plane) — and are
-consumed locally by scheduling logic. Neither source modifies on-wire formats, affects
-interoperability, or is required for protocol correctness. The transport MUST function correctly
-when no optional scheduling inputs are provided.
-
-**Application context hints.** The application MAY provide environmental context that improves scheduling efficiency on constrained modalities. Context hints follow the same integration pattern as data link adaptation ([Section 10.4](#104-data-link-adaptation)): the application evaluates operational context that M4P does not possess and provides relevant parameters to the transport. Inputs include self-position and peer position estimates (with uncertainty and timestamps), NodeUID-to-Node-Address identity mapping, and propagation model parameters (reliable range, maximum range). Position hints may originate from any source — USBL ranging, GPS-at-surface telemetry, INS dead reckoning, mission-planned waypoints, or peer status message payloads.
-
-**Data link evidence plane.** When delivering a received Transmission, a DataLink adapter MAY attach reception quality metadata (SNR, RSSI, decode confidence). All fields are individually optional; when none are provided, the transport treats reception as a binary event. Each adapter SHOULD declare at initialization which reception quality fields it can provide; an adapter that declares none is fully conformant. Evidence-plane data is local API only — never encoded in any on-wire structure — and MUST NOT be forwarded to other nodes.
-
-**Invariants.** Missing or stale inputs from either source MUST cause the transport to degrade toward more aggressive forwarding, never toward suppression.
+Hardware capabilities outside M4P networking, such as USBL positioning, MAY be
+exposed directly to applications. If their facts are later admitted to the
+evidence plane, they require a vocabulary and reducer change under this
+contract.
 
 ---

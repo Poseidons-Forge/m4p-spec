@@ -394,6 +394,8 @@ The `AUTH_TAG_SIZE` field MUST only be set to a non-zero value when the M4P payl
 
 A Transmission is the unit of data exchanged between nodes over a DataLink. Its base form consists of the transmitting node's address followed by one or more serialized packets. M4P-managed TDMA and `wan` links insert the receipt metadata defined below between those fields.
 
+The adapter contract, including opportunity identity, peer-receipt reduction, send-outcome semantics, and the rule that evidence-plane data is never forwarded, is defined in [Section 10](#10-datalink-abstraction). The `max_transmission_duration` descriptor is the adapter-reported time to transmit its maximum byte budget with turnaround included; it does not alter this encoding.
+
 ```text
 +-----------------------------------------------+
 | node_address_sender    (NA: 8b or 16b)        |
