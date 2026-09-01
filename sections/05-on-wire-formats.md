@@ -311,7 +311,15 @@ Present when `MODALITY_MASK_PRESENT` is set. The bit assignments are:
 | 4 | WAN |
 | 5–7 | Reserved |
 
-When absent, the message type's default modality mask applies. Nodes MUST NOT transmit a packet on a modality not permitted by the effective modality mask.
+An origin node authors the effective mask when the application submits the message: a per-message
+override replaces the origin's per-type default, and otherwise that origin default applies. If the
+effective mask permits all five defined modalities (`0b00011111`), the field MUST be absent. If it
+is narrower, the field MUST be present and carry that effective mask. Forwarding nodes MUST use
+only this authored wire value: absence permits every modality, and a forwarding node MUST NOT apply
+its own per-type default. Nodes MUST NOT transmit a packet on a modality excluded by a present
+mask.
+
+*PSFI-1351 note drafted by a Codex agent.*
 
 The canonical modality vocabulary is `acoustic`, `radio`, `satellite`, `lan`, and `wan`. Operator and API parsers MAY accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but any emitted modality name MUST use `wan`. These aliases all select bit 4 and do not alter the wire encoding.
 
