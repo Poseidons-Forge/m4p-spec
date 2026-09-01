@@ -85,6 +85,9 @@ When a DataLink adapter carries the sender NA out-of-band (as permitted by [Sect
 
 Evidence-plane metadata ([Section 10.5](#105-scheduling-inputs)), when provided alongside a received Transmission, is local API data and MUST NOT be forwarded to other nodes. Each node's evidence-plane observations are consumed locally by the transport's scheduling logic.
 
+<!-- PSFI-1397 update drafted by a Codex agent. -->
+For a link-managed link registered with canonical modality `wan`, the transport MUST insert and consume the WAN receipt envelope from [Section 5.8](#58-transmission-encoding). An M4P-managed TDMA link uses the TDMA receipt envelope instead, regardless of modality. The adapter treats the complete canonical Transmission as opaque binary data; broker acceptance or another link-layer send outcome is not evidence that a peer received it. A `lan` adapter instead supplies its exact per-endpoint delivery outcomes as local evidence and MUST NOT add the WAN envelope. An `acoustic` link likewise MUST NOT add the WAN envelope; an M4P-managed TDMA acoustic link uses the TDMA receipt envelope.
+
 ### 10.4 Data Link Adaptation
 
 **[BEHAVIORAL + GUIDANCE]**

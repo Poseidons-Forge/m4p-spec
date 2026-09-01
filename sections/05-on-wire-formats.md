@@ -392,7 +392,7 @@ The `AUTH_TAG_SIZE` field MUST only be set to a non-zero value when the M4P payl
 
 ### 5.8 Transmission Encoding
 
-A Transmission is the unit of data exchanged between nodes over a DataLink. On a link-managed DataLink it consists of the transmitting node's address followed by one or more serialized packets.
+A Transmission is the unit of data exchanged between nodes over a DataLink. Its base form consists of the transmitting node's address followed by one or more serialized packets. M4P-managed TDMA and `wan` links insert the receipt metadata defined below between those fields.
 
 ```text
 +-----------------------------------------------+
@@ -425,7 +425,35 @@ For example, schedule hash `0x35` with an eight-participant bitmap whose bits 2,
 
 An M4P-managed TDMA Transmission MAY contain no packets when it reports at least one previously unreported set receipt bit. This receipt-only form ends immediately after the bitmap. Other Transmissions retain the packet requirements above.
 
-**Parsing.** The receiving node reads the `node_address_sender`; on an M4P-managed TDMA link it then reads the packed envelope byte and the bitmap length selected by its size bit. It subsequently parses packets sequentially — the `message_type_id` CTE encoding and `payload_length` field provide the information needed to determine packet boundaries. During the fleet cutover, an M4P-managed TDMA receiver MUST treat a pre-envelope packet-only Transmission as a malformed transmission, count one decode failure, and drop the entire Transmission. Link-managed parsing is unchanged. Any trailing bytes insufficient to form a valid packet header MUST be discarded. Implementations SHOULD NOT pad Transmissions with trailing bytes; if padding is required by the DataLink layer, the adapter MUST strip it before delivering the Transmission to the transport.
+<!-- PSFI-1397 update drafted by a Codex agent. -->
+**WAN receipt envelope.** Every Transmission on a link-managed DataLink whose canonical modality is `wan` MUST place the following independently length-framed envelope immediately after `node_address_sender`. An M4P-managed TDMA DataLink carries the TDMA receipt envelope above instead, regardless of modality — exactly one receipt envelope form applies to a DataLink, selected by its MAC management. A `lan` or `acoustic` DataLink MUST NOT use this envelope.
+
+```text
++-----------------------------------------------+
+| node_address_sender       (NA: 8b or 16b)     |
++-----------------------------------------------+
+| envelope_body_length      (u16, network order)|
++-----------------------------------------------+
+| sequence                  (u8)                |
++-----------------------------------------------+
+| peer_1_node_address       (NA: 8b or 16b)     |
+| peer_1_latest_sequence    (u8)                |
++-----------------------------------------------+
+| ... zero or more additional digest entries   |
++-----------------------------------------------+
+| packet_1 || packet_2 || ... || packet_n       |
++-----------------------------------------------+
+```
+
+`envelope_body_length` counts the `sequence` byte and every digest-entry byte; it excludes the two-byte length field and the packet stream. Its value MUST be at least one and MUST satisfy `(envelope_body_length - 1) mod (NA_width + 1) = 0`. The sender's `sequence` is a per-sender, per-link unsigned byte incremented modulo 256 for each emitted WAN Transmission. Each digest entry is `(peer_node_address, latest_sequence_received)` and therefore costs two bytes in 8-bit addressing mode or three bytes in 16-bit mode. A digest MUST NOT contain the same peer more than once. A WAN Transmission retains the base requirement to contain at least one packet; v1 defines no WAN receipt-only form.
+
+For example, in 8-bit addressing mode sender `0x33`, sender sequence `0x2a`, and digest entries `(0x07, 0x10)` and `(0x09, 0x20)` produce the prefix `33 00 05 2a 07 10 09 20`, followed immediately by the first packet. The fixed WAN-envelope overhead after the sender is three bytes and these two entries add four bytes.
+
+Each digest entry is evidence only for the exact `(peer_node_address, latest_sequence_received)` Transmission retained by the receiver of the digest. It confirms whole messages carried by that Transmission. For fragments, implementations MUST accumulate the acknowledged byte ranges and confirm only after the ranges cover the complete retained payload. An absent digest entry is no evidence, and a later sequence does not imply receipt of any gap or earlier sequence in v1. Duplicate reporting of the same opportunity MUST NOT reapply evidence.
+
+WAN sequence comparison uses modulo-256 serial-number arithmetic with a half-range of 128. Relative to newest sequence `N`, `(S - N) mod 256` in `1..=127` is newer, zero is the same sequence, and values in `129..=255` are one through 127 positions older. Distance 128 is ambiguous and outside the evidence window. Implementations retain at most the newest sequence plus its 127 predecessors for a sender. A digest entry outside that retained window, not found as an exact retained opportunity, or older than E11 peer-restart evidence MUST be treated as no evidence. Peer restart begins a new serial epoch for that peer.
+
+**Parsing.** The receiving node first reads `node_address_sender`. On an M4P-managed TDMA link it then reads the packed envelope byte and the bitmap length selected by its size bit. On a `wan` link it instead reads `envelope_body_length`, validates and parses the sequence and complete fixed-width digest entries, then advances exactly that length to the packet stream. It subsequently parses packets sequentially — the `message_type_id` CTE encoding and `payload_length` field provide the information needed to determine packet boundaries. During a receipt-envelope cutover, a receiver on either affected link type MUST treat a pre-envelope packet-only Transmission as one malformed transmission, count one decode failure, and drop the entire Transmission. A malformed WAN envelope, including truncation, invalid length alignment, or duplicate peers, likewise drops the entire Transmission and applies no digest evidence. Base-form parsing on other link descriptors is unchanged. Any trailing bytes insufficient to form a valid packet header MUST be discarded. Implementations SHOULD NOT pad Transmissions with trailing bytes; if padding is required by the DataLink layer, the adapter MUST strip it before delivering the Transmission to the transport.
 
 **DataLink adaptation.** The encoding above is the canonical Transmission wire format. A DataLink adapter MAY omit the `node_address_sender` prefix when the underlying link protocol natively provides the sender's identity (e.g., an acoustic modem's source address field). In this case, the receiving adapter MUST reconstruct the full Transmission by prepending the `node_address_sender` derived from link-layer metadata before delivering it to the transport. This optimization is encapsulated within the DataLink adapter pair — the transport layer always receives the canonical format. See [Section 10.3](#103-transmission-metadata) for adapter responsibilities.
 
