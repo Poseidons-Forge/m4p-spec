@@ -66,9 +66,9 @@ The registration descriptors have these meanings:
 - The endpoint set of a unicast link is the set of endpoints the adapter can
   currently address. It is an address-table fact, never a reachability claim.
 
-Registration protocol versions are deployment-wide contracts. A daemon MUST
-reject a registration below its minimum supported version. All adapters in a
-deployment MUST be upgraded and re-registered with the corresponding daemon.
+The typed registration contract defined here is protocol version 1. A daemon
+MUST reject a registration claiming any other version. The version field remains
+a divergence tripwire; it does not negotiate multiple contract versions.
 
 ### 10.2 Transmission and Opportunity Interface
 
