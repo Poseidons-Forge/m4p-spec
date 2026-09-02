@@ -14,6 +14,8 @@ including commercial, under the following terms:
 
 ## 11. Network Layer {#11-network-layer}
 
+*PSFI-1347 demand catalog update drafted by a Codex agent, 2026-08-31.*
+
 **[WIRE FORMAT + BEHAVIORAL]**
 
 Network layer functions operate through Network Control (NC) messages — reserved message types (32,000–32,767) carried by the transport layer using the same store-carry-forward mechanisms as application traffic (see [Section 4.1](#41-message-type-id-ranges)). NC messages are never delivered to application clients. The network layer is fully decentralized; address coordination, conflict resolution, and peer discovery decisions are made locally from information exchanged between peers.
@@ -181,7 +183,7 @@ flowchart TD
     CONFIRMED -->|"Claim lapsed<br>(expiration_interval exceeded)"| C_PENDING["PENDING"]:::pending_ref
 
     NOTE_U["No address assigned.<br>Node cannot participate."]:::note
-    NOTE_P["MAY send/receive NC traffic.<br>MUST NOT send application data.<br>Rebroadcast claim on<br>new peer discovery."]:::note
+    NOTE_P["MAY send/receive protocol NC.<br>MUST NOT send application data.<br>New peers restore claim novelty."]:::note
     NOTE_C["MAY send application data.<br>Full network participation."]:::note
 
     UNASSIGNED -.- NOTE_U
@@ -219,11 +221,13 @@ If a conflict declaration (NC_NODE_ADDRESS_CONFLICT or NC_CLIENT_ADDRESS_CONFLIC
 
 **ACK suppression.** [GUIDANCE] ACK suppression uses a random backoff delay before sending an ACK, to reduce the probability of simultaneous ACK transmissions from multiple nodes. The backoff range SHOULD be tuned to the characteristics of the underlying data link — shorter delays for low-latency links (LAN, IP/MQTT), longer delays for high-latency or half-duplex links (radio), and potentially unnecessary on links where transmit scheduling already provides natural spacing (acoustic). The specific backoff ranges are an implementation choice.
 
-#### 11.4.2 Pending Claim Rebroadcast
+#### 11.4.2 Pending Claim Peer Discovery
 
-A node with a PENDING claim SHOULD rebroadcast the claim when it discovers a new 1-hop peer — that is, when it receives any NC message from a Node Address not previously known to the node. The new peer may not have been online when the original claim was broadcast and therefore has never had an opportunity to ACK or contest it.
-
-This accelerates staggered boot convergence: the first node can be ACKed soon after peers appear instead of waiting for full contention timeout. Rebroadcast is event-driven (new-peer discovery), not timer-driven.
+A retained PENDING claim participates in normal knowledge-driven forwarding. Discovering a new
+1-hop peer creates a new knowledge-matrix column that lacks the claim, restoring audience novelty
+for the record. The normal admission floor, score ordering, and spacing ladder then determine when
+the claim is transmitted again; peer discovery does not create a separate rebroadcast path or
+transmission opportunity.
 
 #### 11.4.3 Restored Claims
 
@@ -269,79 +273,78 @@ Only NC_NODE_SUMMARY and NC_NODE_ADDRESS_CLAIM carry origin NodeUID in payload. 
 
 **Address field widths.** All address fields in NC payloads (node addresses and client addresses) MUST use the same width as the network-wide addressing mode: 8-bit in 8-bit addressing deployments, 16-bit in 16-bit addressing deployments. The notation `(NA width)` and `(CA width)` in the payload diagrams below refers to this configured width (1 or 2 bytes).
 
-#### 11.6.2 Propagation Models
+#### 11.6.2 NC Forwarding Model and Scope
 
-NC defines three propagation models:
+NC uses the same store-carry-forward model as application data: retained records are scored by
+priority and audience novelty, retransmissions obey the spacing ladder, and MIID deduplication
+prevents loops. Each protocol-defined NC type has one forwarding scope in the catalog:
 
-**Announce.** Broadcast + forward at each receiver; MIID deduplication prevents loops.
+- **Everywhere:** an external instance MAY be forwarded on infrastructure and mesh links.
+- **Infrastructure only:** an external instance MAY be forwarded only on links whose modality
+  class is Infrastructure.
+- **None:** an external instance MUST NOT be forwarded on any link.
 
-Specific NC message types may further constrain Announce forwarding by modality — see individual catalog entries in [Section 11.7](#117-nc-message-catalog). In particular, NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and NC_TDMA_SCHEDULE suppress mesh forwarding ([Section 11.7.1](#1171-nc_node_summary-32000), [Section 11.7.14](#11714-nc_claim_renewal-32004), [Section 11.7.17](#11717-nc_tdma_join-32030), [Section 11.7.18](#11718-nc_tdma_schedule-32031)), and NC_NETWORK_STATE_REQUEST/RESPONSE suppress all forwarding ([Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)).
+Scope governs forwarding only. The NC engine MAY originate any type on any suitable link; for
+example, a TDMA join originates on the acoustic link whose domain it joins even though received
+joins are not forwarded across mesh links.
 
-- **Header:** NC Announce ([Section 5.5.1](#551-nc-announce-header)).
-- Used by: NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_NETWORK_STATE_REQUEST, NC_NETWORK_STATE_RESPONSE, NC_NODE_ADDRESS_CLAIM, NC_CLIENT_ADDRESS_CLAIM, NC_NODE_ADDRESS_CONFLICT, NC_CLIENT_ADDRESS_CONFLICT, NC_TDMA_JOIN, NC_TDMA_SCHEDULE.
-
-**Query/Response.** Queries propagate like Announce until reaching a resolver (local host state or learned mapping). A resolver:
-
-1. MUST NOT forward the query further.
-2. MUST emit the corresponding response, targeted back to the querier.
-
-Responses are targeted to the querier NA (not network-wide broadcast). Query/answer provides on-demand resolution; periodic NC_NODE_SUMMARY provides eventual network-wide convergence.
-
-If multiple nodes can resolve, each MAY absorb and answer; the querier accepts the first and discards duplicates.
-
-- **Header:** Queries use the NC Announce header ([Section 5.5.1](#551-nc-announce-header)); answers use the NC Targeted header ([Section 5.5.2](#552-nc-targeted-header)).
-- Used by: NC_CLIENT_UID_QUERY → NC_CLIENT_UID_ANSWER, NC_NODE_UID_QUERY → NC_NODE_UID_ANSWER, NC_CLIENT_ADDRESS_RESOLVE_QUERY → NC_CLIENT_ADDRESS_RESOLVE_ANSWER.
+Wire form is independent of forwarding scope. Broadcast and query records use the NC Announce
+header ([Section 5.5.1](#551-nc-announce-header)); records naming a destination NA use the NC
+Targeted header ([Section 5.5.2](#552-nc-targeted-header)). Queries follow the common forwarding
+model until a receiver can resolve every queried item. Such a resolver MUST absorb the query and
+MUST emit the corresponding targeted answer; partial resolution MAY emit partial answers but does
+not absorb the full query. If several nodes can resolve a query, each MAY answer, and the querier
+accepts the first valid answer and discards duplicates.
 
 > [GUIDANCE] A resolver answering from learned (non-local) state may return stale data. This is acceptable in DTN operation: stale mappings are corrected by address versioning (Section 11.1), fingerprint-triggered refresh (Section 11.9.4), and periodic NC_NODE_SUMMARY convergence (Section 11.7.1).
 
-**Targeted.** Addressed to one destination and forwarded only toward that destination via store-carry-forward.
-
-- **Header:** NC Targeted ([Section 5.5.2](#552-nc-targeted-header)).
-- Used by: NC_ADDRESS_CLAIM_ACK, NC_NODE_UID_ANSWER, NC_CLIENT_UID_ANSWER, NC_CLIENT_ADDRESS_RESOLVE_ANSWER, Fragment NACK.
-
-The propagation definitions above are authoritative; message-type usage is listed in each model's "Used by" line and in the catalog below.
-
 ### 11.7 NC Message Catalog
 
-#### 11.7.0 Scheduling Bias
+#### 11.7.0 Scheduling Priority
 
-**Scheduling bias.** NC messages have the highest *default* class bias relative to application traffic because correct address mappings and peer state are prerequisites for reliable application delivery. Recommended class bias order: (1) Network Control, (2) Request, (3) Response, (4) Event, (5) Status. This is a scheduling bias, not strict preemption: higher-priority eligible application packets MAY outrank lower-priority NC packets.
+**Scheduling priority.** NC messages use their catalog priority in the same score-density model as
+application records. NC does not receive a separate class multiplier. The deliberate catalog
+values below place claims above routine data, while demand state at priority 120 competes below
+claims and above lower-priority routine records when novelty and wire size are otherwise equal.
 
 Conflict-related catalog entries in this section define trigger surfaces and message contents. Deterministic winner/loser rules, convergence, and declaration suppression are defined canonically in [Section 11.8](#118-conflict-detection-and-resolution).
 
 **Shared catalog rules (unless overridden below):**
-- **Propagation labels.** `Announce`, `Query`, and `Targeted` semantics (including header selection) are defined in [Section 11.6.2](#1162-propagation-models).
+- **Wire class and scope.** Header selection and forwarding-scope semantics are defined in [Section 11.6.2](#1162-nc-forwarding-model-and-scope).
 - **Query receiver handling.** For `NC_CLIENT_UID_QUERY`, `NC_NODE_UID_QUERY`, and `NC_CLIENT_ADDRESS_RESOLVE_QUERY`, a receiver that can resolve one or more queried items MUST emit the corresponding targeted answer(s) for resolved items; it MUST absorb (not forward) only when all queried items are resolvable; otherwise it forwards the full query and MAY include partial answers.
 - **Mapping update handling.** Messages that carry UID/address mappings (summaries, claims, answers, and state responses) MUST apply stale-mapping rules from [Section 11.1](#111-address-derivation-and-versioning) and conflict rules from [Section 11.8](#118-conflict-detection-and-resolution).
 
-NC message default priorities are deployment-configurable. The following RECOMMENDED defaults reflect the relative urgency of each message type:
+NC message default priorities and TTLs are deployment-configurable. The following RECOMMENDED
+catalog values keep protocol NC above routine data while bounding retained state deliberately:
 
-| Type ID | Name | Propagation | Default Priority | Urgency |
-|--------:|----------------------------|-----------|:------------:|-------------------------|
-| 32,000 | NC_NODE_SUMMARY | Announce | 40 | Low — periodic background maintenance |
-| 32,001 | NC_NETWORK_STATE_REQUEST | Announce | 120 | Medium — bulk sync, not time-critical |
-| 32,002 | NC_NETWORK_STATE_RESPONSE | Announce | 120 | Medium — bulk sync response |
-| 32,003 | Fragment NACK | Targeted | 160 | Medium — retransmission request |
-| 32,004 | NC_CLAIM_RENEWAL | Announce | 40 | Low — periodic background maintenance |
-| 32,010 | NC_NODE_ADDRESS_CLAIM | Announce | 200 | High — network formation |
-| 32,011 | NC_CLIENT_ADDRESS_CLAIM | Announce | 200 | High — network formation |
-| 32,012 | NC_ADDRESS_CLAIM_ACK | Targeted | 200 | High — unblocks application data |
-| 32,013 | NC_NODE_UID_QUERY | Query | 160 | Medium — on-demand resolution |
-| 32,014 | NC_NODE_UID_ANSWER | Targeted | 160 | Medium — on-demand resolution |
-| 32,015 | NC_CLIENT_UID_QUERY | Query | 160 | Medium — on-demand resolution |
-| 32,016 | NC_CLIENT_UID_ANSWER | Targeted | 160 | Medium — on-demand resolution |
-| 32,017 | NC_CLIENT_ADDRESS_RESOLVE_QUERY | Query | 160 | Medium — on-demand resolution |
-| 32,018 | NC_CLIENT_ADDRESS_RESOLVE_ANSWER | Targeted | 160 | Medium — on-demand resolution |
-| 32,020 | NC_NODE_ADDRESS_CONFLICT | Announce | 240 | Critical — stop using wrong address |
-| 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | 240 | Critical — stop using wrong address |
-| 32,030 | NC_TDMA_JOIN | Announce | 200 | High — TDMA participant discovery |
-| 32,031 | NC_TDMA_SCHEDULE | Announce | 200 | High — TDMA schedule convergence |
+| Type ID | Name | Wire class | Forwarding scope | Default priority | Default TTL | Urgency |
+|--------:|----------------------------|-----------|---------------------|:----------------:|------------:|-------------------------|
+| 32,000 | NC_NODE_SUMMARY | Announce | Infrastructure only | 80 | 3,600 s | Periodic discovery state |
+| 32,001 | NC_NETWORK_STATE_REQUEST | Announce | None | 120 | 120 s | Link-local bulk sync request |
+| 32,002 | NC_NETWORK_STATE_RESPONSE | Announce | None | 120 | 120 s | Link-local bulk sync response |
+| 32,003 | Fragment NACK | Targeted | Everywhere | 160 | 120 s | Retransmission request |
+| 32,004 | NC_CLAIM_RENEWAL | Announce | Infrastructure only | 80 | 3,600 s | Periodic claim maintenance |
+| 32,005 | NC_NETWORK_STATE_DIGEST | Announce | None | 80 | 300 s | Link-local state comparison |
+| 32,010 | NC_NODE_ADDRESS_CLAIM | Announce | Everywhere | 240 | 3,600 s | Network formation |
+| 32,011 | NC_CLIENT_ADDRESS_CLAIM | Announce | Everywhere | 240 | 3,600 s | Network formation |
+| 32,012 | NC_ADDRESS_CLAIM_ACK | Targeted | Everywhere | 240 | 300 s | Unblocks application data |
+| 32,013 | NC_NODE_UID_QUERY | Query | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,014 | NC_NODE_UID_ANSWER | Targeted | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,015 | NC_CLIENT_UID_QUERY | Query | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,016 | NC_CLIENT_UID_ANSWER | Targeted | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,017 | NC_CLIENT_ADDRESS_RESOLVE_QUERY | Query | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,018 | NC_CLIENT_ADDRESS_RESOLVE_ANSWER | Targeted | Everywhere | 160 | 120 s | On-demand resolution |
+| 32,020 | NC_NODE_ADDRESS_CONFLICT | Announce | Everywhere | 255 | 3,600 s | Stop using a wrong address |
+| 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | Everywhere | 255 | 3,600 s | Stop using a wrong address |
+| 32,030 | NC_TDMA_JOIN | Announce | Infrastructure only | 200 | 3,600 s | TDMA participant discovery |
+| 32,031 | NC_TDMA_SCHEDULE | Announce | Infrastructure only | 200 | 3,600 s | TDMA schedule convergence |
+| 32,040 | [NC_DEMAND_STATE](#1111-demand-state-record) | Announce | Everywhere | 120 | 120 s | Compact outstanding demand and cures |
 
 #### 11.7.1 NC_NODE_SUMMARY (32,000)
 
 **Purpose:** Periodic broadcast of a node's identity, address, and hosted clients; primary baseline discovery.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Infrastructure only.
 
 **When sent:**
 - On node startup (after address assignment).
@@ -394,15 +397,11 @@ The `tdma_modality_count` field lists the modalities for which this node partici
 - Apply shared mapping-update handling and update node/client mapping state.
 - After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience.
 
-**Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_NODE_SUMMARY packets on mesh modalities; only the originator broadcasts its own summary. On infrastructure modalities, normal Announce forwarding applies.
-
-This suppression applies to NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and NC_TDMA_SCHEDULE. NC_NETWORK_STATE_REQUEST and NC_NETWORK_STATE_RESPONSE suppress all forwarding (see [Section 11.7.2](#1172-nc_network_state_request-32001), [Section 11.7.3](#1173-nc_network_state_response-32002)). Other Announce NC messages (claims, conflicts) remain fully forwarded.
-
 #### 11.7.2 NC_NETWORK_STATE_REQUEST (32,001)
 
 **Purpose:** Request known network mapping state from peers for fast bootstrap.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** None.
 
 **When sent:**
 - On node startup (after address assignment) on high-bandwidth modalities (LAN, MQTT).
@@ -414,8 +413,6 @@ This suppression applies to NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and
 **Payload:** None (empty payload).
 
 **Payload size:** `0` bytes.
-
-**Forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_NETWORK_STATE_REQUEST packets on any modality. This message is strictly link-local.
 
 **Receiver behavior:**
 - On first observation of a request MIID, start exactly one randomized jitter timer (single logical request; never per link or per modality) and choose the delay once: recommended range 50–500 ms if the request is observed only on LAN high-bandwidth links, or 1–5 s if observed on any non-LAN high-bandwidth link (for example, MQTT).
@@ -429,7 +426,7 @@ This suppression applies to NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, NC_TDMA_JOIN, and
 
 **Purpose:** Broadcast of a node's known mappings for bootstrap and link-local convergence.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** None.
 
 **When sent:**
 - After receiving an NC_NETWORK_STATE_REQUEST, subject to jitter-based suppression (see [Section 11.7.2](#1172-nc_network_state_request-32001) receiver behavior).
@@ -465,8 +462,6 @@ This is an **optional bootstrap optimization**; correctness does not depend on i
 
 **Truncation and convergence.** When a peer's jitter timer fires and it has observed truncated responses, the peer SHOULD respond only if it holds mappings with newer `claim_renewal_ts` values than the newest entry in observed responses, or mappings for nodes entirely absent from observed responses. A peer SHOULD NOT respond solely to provide lower-priority entries that prior responders intentionally omitted by the most-recent-first truncation rule.
 
-**Forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_NETWORK_STATE_RESPONSE packets on any modality. This message is strictly link-local.
-
 **Receiver behavior:**
 - All receiving nodes — not only the original requester — MUST process each entry as if it were an NC_NODE_SUMMARY and apply shared mapping-update handling.
 - Receivers MUST deduplicate NC_NETWORK_STATE_RESPONSE by MIID across modalities; duplicate copies of the same response are ignored after first processing.
@@ -477,7 +472,7 @@ This is an **optional bootstrap optimization**; correctness does not depend on i
 
 **Purpose:** Explicit Node Address claim.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - On node startup.
@@ -513,7 +508,7 @@ This is an **optional bootstrap optimization**; correctness does not depend on i
 
 **Purpose:** Explicit Client Address claim.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a client registers on the node.
@@ -552,7 +547,7 @@ The host NodeUID is omitted to reduce overhead; `node_address` identifies the ho
 
 **Purpose:** WHOIS query for one or more Client Addresses with unknown identity mapping.
 
-**Propagation:** Query.
+**Wire class:** Query. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a node encounters one or more Client Addresses (in data traffic or via fingerprint mismatch) for which it has no known or valid identity mapping.
@@ -579,7 +574,7 @@ The host NodeUID is omitted to reduce overhead; `node_address` identifies the ho
 
 **Purpose:** Targeted WHOIS answer for Client Address ownership.
 
-**Propagation:** Targeted.
+**Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - In response to an NC_CLIENT_UID_QUERY that the node can resolve (either hosts the client locally or has previously learned the mapping from other nodes).
@@ -616,7 +611,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 **Purpose:** WHOIS query for one or more Node Addresses with unknown identity mapping.
 
-**Propagation:** Query.
+**Wire class:** Query. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a node encounters one or more Node Addresses (in data traffic, NC messages, or transmission metadata) for which it has no known identity mapping.
@@ -643,7 +638,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 **Purpose:** Targeted WHOIS answer for Node Address ownership.
 
-**Propagation:** Targeted.
+**Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - In response to an NC_NODE_UID_QUERY that the node can resolve (either is the queried node itself or has previously learned the mapping from other nodes).
@@ -675,7 +670,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 **Purpose:** Conflict declaration for contested Node Address ownership.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a node detects that two different NodeUIDs are claiming the same NA (via NC claims or transmission metadata), subject to declaration suppression ([Section 11.8.5](#1185-conflict-declaration-suppression)).
@@ -705,7 +700,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 **Purpose:** Conflict declaration for contested Client Address ownership.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a node detects that two different ClientUIDs are claiming the same CA (via NC claims, WHOIS answers, or data-plane MIID detection), subject to declaration suppression ([Section 11.8.5](#1185-conflict-declaration-suppression)).
@@ -735,7 +730,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 **Purpose:** Positive acknowledgment of an address claim.
 
-**Propagation:** Targeted.
+**Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When a 1-hop neighbor receives an NC_NODE_ADDRESS_CLAIM or NC_CLIENT_ADDRESS_CLAIM, detects no conflict, and its random backoff timer fires before hearing another peer's ACK for the same claim (see [Section 11.4.1](#1141-confirmation-paths), *ACK suppression*).
@@ -761,7 +756,7 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 #### 11.7.13 Fragment NACK (32,003)
 
-**Propagation:** Targeted.
+**Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Included here for catalog completeness.
 
@@ -769,7 +764,7 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Purpose:** Lightweight claim refresh for constrained links where NC_NODE_SUMMARY exceeds the payload budget.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Infrastructure only.
 
 **When sent:**
 - Periodically at `expiration_interval / 2`, on modalities where the node's NC_NODE_SUMMARY does not fit within the available payload budget.
@@ -803,13 +798,11 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement.
 
-**Mesh forwarding suppression.** [BEHAVIORAL] Same rule as NC_NODE_SUMMARY: nodes MUST NOT forward received NC_CLAIM_RENEWAL packets on mesh modalities. On infrastructure modalities, normal Announce forwarding applies.
-
 #### 11.7.15 NC_CLIENT_ADDRESS_RESOLVE_QUERY (32,017)
 
 **Purpose:** Reverse WHOIS query for ClientUID-to-CA resolution.
 
-**Propagation:** Query.
+**Wire class:** Query. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - When the transport layer accepts a message destined for a ClientUID with no known address mapping (see [Section 9.2](#92-per-node-message-store), *Pending address resolution*).
@@ -836,7 +829,7 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Purpose:** Targeted reverse-WHOIS answer with ClientUID-to-CA mapping.
 
-**Propagation:** Targeted.
+**Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 **When sent:**
 - In response to an NC_CLIENT_ADDRESS_RESOLVE_QUERY that the node can resolve (either hosts the client locally or has previously learned the mapping from other nodes).
@@ -853,7 +846,7 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Purpose:** Announce that a node is participating in M4P-managed TDMA for a named modality.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Infrastructure only.
 
 **When sent:**
 - When the local node's address reaches CONFIRMED state ([Section 11.4](#114-claim-lifecycle)) and one or more M4P-managed TDMA links are registered (one NC_TDMA_JOIN per modality).
@@ -884,15 +877,13 @@ No per-modality timestamp is carried. TDMA slot ordering uses the node's `claim_
 - The participant with the lowest slot index in the updated participant list (excluding the joining node) is the **designated responder**. The joining node is excluded because it may not yet have the full participant list. The designated responder MUST generate NC_TDMA_SCHEDULE ([Section 11.7.18](#11718-nc_tdma_schedule-32031)) immediately.
 - Other participants SHOULD defer NC_TDMA_SCHEDULE generation for a suppression window (default: 2× cycle duration) and cancel if an NC_TDMA_SCHEDULE reflecting the change is received before the window expires. "Reflecting the change" means the received participant list includes (for joins) or omits (for departures) the triggering node. If the suppression window expires without a matching schedule, the node SHOULD generate NC_TDMA_SCHEDULE with short random jitter.
 
-**Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_TDMA_JOIN packets on mesh modalities. TDMA participation is scoped to a single broadcast domain per modality; mesh forwarding would propagate join announcements beyond the domain boundary. On infrastructure modalities, normal Announce forwarding applies.
-
 NC_TDMA_JOIN establishes participant membership intent. Participant-list reconciliation and schedule-state propagation are carried by NC_TDMA_SCHEDULE ([Section 11.7.18](#11718-nc_tdma_schedule-32031)), and slot-index assignment for the resulting participant set is defined by [Section 11.7.18.1](#117181-slot-assignment-algorithm).
 
 #### 11.7.18 NC_TDMA_SCHEDULE (32,031)
 
 **Purpose:** Broadcast the sender's current participant list for an M4P-managed TDMA modality.
 
-**Propagation:** Announce.
+**Wire class:** Announce. **Forwarding scope:** Infrastructure only.
 
 **When sent:**
 - On TDMA membership changes — join via NC_TDMA_JOIN, or departure via claim expiration ([Section 11.3](#113-claim-expiration-and-renewal)) — subject to designated-responder storm prevention ([Section 11.7.17](#11717-nc_tdma_join-32030) receiver behavior).
@@ -937,8 +928,6 @@ How a node converts converged schedule state into transmission opportunities is 
 
 **Rationale (normative).** Merge semantics preserve locally known active participants and avoid transient slot collisions caused by incomplete sender knowledge. Reconciliation depends on detecting that the received list omitted active participants; replace semantics would discard that knowledge and break this detection path.
 
-**Mesh forwarding suppression.** [BEHAVIORAL] Nodes MUST NOT forward received NC_TDMA_SCHEDULE packets on mesh modalities. TDMA schedule state is scoped to a single broadcast domain per modality. On infrastructure modalities, normal Announce forwarding applies.
-
 #### 11.7.18.1 Slot Assignment Algorithm
 
 The slot-assignment algorithm for M4P-managed TDMA is normative and deterministic. Given the active participant set for a modality (after merge/defer rules in [Section 11.7.18](#11718-nc_tdma_schedule-32031)), nodes MUST sort participants by ascending `(claim_origin_timestamp, node_address)`.
@@ -958,6 +947,22 @@ slot_time(g) = epoch + cycle(g) × Y + X + position_in_cycle(g) × S
 On participant departure, implementations MUST remove the departed node and recompute positions from the compacted sorted list (no gap preservation). Gap preservation is not permitted.
 
 This algorithm defines participant-to-slot mapping only. The mechanism that emits send opportunities from that mapping depends on [Section 10.4](#104-data-link-adaptation) mode selection.
+
+#### 11.7.19 NC_NETWORK_STATE_DIGEST (32,005)
+
+**Purpose:** Compact comparison of canonical mapping state on high-throughput infrastructure
+links.
+
+**Wire class:** Announce. **Forwarding scope:** None.
+
+**When sent:** Periodically on eligible high-throughput infrastructure links when a periodic claim
+refresh is not already due on the same tick.
+
+**Payload:** Schema version, digest domain, record count, and the 16-byte canonical state digest.
+
+**Receiver behavior:** Compare the advertised digest with the local canonical state digest. A
+mismatch schedules a jittered NC_NETWORK_STATE_REQUEST subject to the peer/domain repair cooldown.
+The digest is consumed without entering the forwarding store.
 
 ### 11.8 Conflict Detection and Resolution
 
@@ -1395,5 +1400,31 @@ This reconciliation is self-limiting: once the stale node updates its schedule, 
 **Join-case convergence.** When divergence is caused by a missed NC_TDMA_JOIN, reconciliation is straightforward: the detecting node receives an NC_TDMA_SCHEDULE listing the unknown participant, verifies the participant's claim is active, adds it, and recomputes. Convergence is fast — bounded by the next transmission in the misaligned slot.
 
 **Departure-case convergence.** When divergence is caused by a missed departure (claim expiration), nodes may disagree on whether a departed node's claim is still active because they hold different `claim_renewal_timestamp` values for that peer. NC_TDMA_SCHEDULE exchange cannot resolve this disagreement — each node's local expiration computation is based on the last renewal it received. Convergence relies on claim expiration firing independently on each node, bounded by `expiration_interval`. Explicit departure signaling ([Section 13.4](#134-graceful-tdma-departure)) is a future feature that would eliminate this convergence gap.
+
+#### 11.10.8 TDMA Receipt Evidence
+
+**[BEHAVIORAL]**
+
+<!-- Drafted by a Codex agent. -->
+Every M4P-managed TDMA Transmission carries the receipt envelope defined in [Section 5.8](#58-transmission-encoding). Receipt envelopes MUST NOT be enabled on link-managed links, including links whose adapter independently implements TDMA.
+
+Each receiver maintains a per-link opportunity table keyed by the UTC-derived `(cycle, slot)` identity from [Section 11.10.3](#11103-cycle-geometry). A successfully sent local Transmission enters the table when its `SendTransmission` action is emitted; a received Transmission enters only after the complete packet stream parses and its sender matches the locally expected owner of that physical opportunity. Entries identify each whole record and each fragment byte range carried by the opportunity. An entry expires one TDMA cycle after its opportunity. Any change to the ordered participant list, slot duration, slots per cycle, or guard time MUST clear the table before receipt processing continues.
+
+For a Transmission by participant slot index `s`, bitmap bit `i` describes the latest physical opportunity owned by participant slot index `i` that occurred strictly before `s`'s current opportunity in the continuous round-robin schedule. The mapping crosses cycle boundaries: the first participant's bitmap refers to the preceding round, while a middle participant's bitmap combines earlier participants from the current round with later participants from the preceding round. The sender's own bit is unused.
+
+A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. A whole-schedule mismatch MUST increment a per-link counter and emit an engineering event. Sender-slot mismatch retains the reconciliation behavior in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
+
+For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is only a failure sample for the directed pairwise estimator and an input that voids any predicted receipt for that opportunity.
+
+When receipt-only transmissions are enabled, a node that has no packet candidate but holds an unreported set bit SHOULD emit the receipt-only form in its next assigned opportunity. Implementations SHOULD enable this behavior by default. A set bit becomes reported only after the containing Transmission receives a successful send result; busy, failed, and timed-out sends leave it pending.
+
+**Whole-schedule hash.** The canonical hash input is the domain separator `M4P-TDMA-SCHEDULE-V1` followed by a zero byte, participant count as big-endian `u16`, each ordered participant NA as big-endian `u16`, slot duration in milliseconds as big-endian `u64`, slots per cycle as big-endian `u32`, and guard duration in milliseconds as big-endian `u64`. Compute SHA-256 over that byte string and use the low seven bits of the first digest byte.
+
+Shared test vectors:
+
+| Ordered participants | Slot duration | Slots/cycle | Guard | Seven-bit hash |
+|---|---:|---:|---:|---:|
+| `[1, 7, 42]` | 30,000 ms | 8 | 2,000 ms | 109 (`0x6d`) |
+| `[0x0102, 0x1001, 0x7ffe, 0xff00]` | 12,500 ms | 16 | 750 ms | 68 (`0x44`) |
 
 ---

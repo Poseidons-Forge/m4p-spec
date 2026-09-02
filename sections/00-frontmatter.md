@@ -14,6 +14,8 @@ including commercial, under the following terms:
 
 # M4P Protocol Specification
 
+*PSFI-1347 table-of-contents update drafted by a Codex agent, 2026-08-31.*
+
 ## Multi-Modal Maritime Mesh Protocol
 
 | | |
@@ -108,9 +110,9 @@ including commercial, under the following terms:
   - [9.2 Per-Node Message Store](#92-per-node-message-store)
     - [9.2.1 Pending Address Resolution (Outbound)](#921-pending-address-resolution-outbound)
     - [9.2.2 Source Identity Resolution (Inbound)](#922-source-identity-resolution-inbound)
-  - [9.3 Resend Behavior](#93-resend-behavior)
-    - [9.3.1 Request Resend](#931-request-resend)
-    - [9.3.2 Response Caching and Resend](#932-response-caching-and-resend)
+  - [9.3 Emergent Resend Cadence](#93-emergent-resend-cadence)
+    - [9.3.1 Common Spacing Ladder](#931-common-spacing-ladder)
+    - [9.3.2 Request and Response Termination](#932-request-and-response-termination)
     - [9.3.3 Status Coalescing](#933-status-coalescing)
     - [9.3.4 Event Resend](#934-event-resend)
   - [9.4 Priority and Scheduling](#94-priority-and-scheduling)
@@ -127,7 +129,7 @@ including commercial, under the following terms:
     - [9.9.1 Malformed Packets](#991-malformed-packets)
     - [9.9.2 Unknown Flag Bits](#992-unknown-flag-bits)
     - [9.9.3 Protocol Version Compatibility](#993-protocol-version-compatibility)
-  - [9.10 Dispersion-Aware Scheduling (Mesh Modalities)](#910-dispersion-aware-scheduling-mesh-modalities)
+  - [9.10 Knowledge-Driven Scheduling](#910-knowledge-driven-scheduling)
 - [10. DataLink Abstraction](#10-datalink-abstraction)
   - [10.1 DataLink Interface](#101-datalink-interface)
   - [10.2 Modality Classification](#102-modality-classification)
@@ -143,14 +145,14 @@ including commercial, under the following terms:
     - [11.3.3 Lapsed Claim Detection](#1133-lapsed-claim-detection)
   - [11.4 Claim Lifecycle](#114-claim-lifecycle)
     - [11.4.1 Confirmation Paths](#1141-confirmation-paths)
-    - [11.4.2 Pending Claim Rebroadcast](#1142-pending-claim-rebroadcast)
+    - [11.4.2 Pending Claim Peer Discovery](#1142-pending-claim-peer-discovery)
     - [11.4.3 Restored Claims](#1143-restored-claims)
   - [11.5 Local Persistence](#115-local-persistence)
   - [11.6 Network Control Message Format](#116-network-control-message-format)
     - [11.6.1 Transport Properties](#1161-transport-properties)
-    - [11.6.2 Propagation Models](#1162-propagation-models)
+    - [11.6.2 NC Forwarding Model and Scope](#1162-nc-forwarding-model-and-scope)
   - [11.7 NC Message Catalog](#117-nc-message-catalog)
-    - [11.7.0 Scheduling Bias](#1170-scheduling-bias)
+    - [11.7.0 Scheduling Priority](#1170-scheduling-priority)
     - [11.7.1 NC\_NODE\_SUMMARY (32,000)](#1171-nc_node_summary-32000)
     - [11.7.2 NC\_NETWORK\_STATE\_REQUEST (32,001)](#1172-nc_network_state_request-32001)
     - [11.7.3 NC\_NETWORK\_STATE\_RESPONSE (32,002)](#1173-nc_network_state_response-32002)
@@ -170,6 +172,7 @@ including commercial, under the following terms:
     - [11.7.17 NC\_TDMA\_JOIN (32,030)](#11717-nc_tdma_join-32030)
     - [11.7.18 NC\_TDMA\_SCHEDULE (32,031)](#11718-nc_tdma_schedule-32031)
       - [11.7.18.1 Slot Assignment Algorithm](#117181-slot-assignment-algorithm)
+    - [11.7.19 NC\_NETWORK\_STATE\_DIGEST (32,005)](#11719-nc_network_state_digest-32005)
   - [11.8 Conflict Detection and Resolution](#118-conflict-detection-and-resolution)
     - [11.8.1 Detection Mechanisms](#1181-detection-mechanisms)
     - [11.8.2 Resolution Rules](#1182-resolution-rules)
@@ -182,6 +185,14 @@ including commercial, under the following terms:
     - [11.9.3 Address Mapping State](#1193-address-mapping-state)
     - [11.9.4 Accelerated Client Address Convergence](#1194-accelerated-client-address-convergence)
     - [11.9.5 Worked Example: Network Bootstrap Sequence (Non-Normative)](#1195-worked-example-network-bootstrap-sequence-non-normative)
+  - [11.10 TDMA Slot Allocation](#1110-tdma-slot-allocation)
+    - [11.10.8 TDMA Receipt Evidence](#11108-tdma-receipt-evidence)
+  - [11.11 Demand-State Record](#1111-demand-state-record)
+    - [11.11.1 Payload Encoding](#11111-payload-encoding)
+    - [11.11.2 Authorship, Validation, and Supersession](#11112-authorship-validation-and-supersession)
+    - [11.11.3 Originator Lifecycle](#11113-originator-lifecycle)
+    - [11.11.4 Receiver Behavior](#11114-receiver-behavior)
+    - [11.11.5 Forwarding and Mixed Fleets](#11115-forwarding-and-mixed-fleets)
 - [12. Encryption and Security](#12-encryption-and-security)
   - [12.1 Responsibility Summary](#121-responsibility-summary)
   - [12.2 M4P Payload Cipher](#122-m4p-payload-cipher)

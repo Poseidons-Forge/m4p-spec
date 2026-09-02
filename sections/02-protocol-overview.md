@@ -14,6 +14,8 @@ including commercial, under the following terms:
 
 ## 2. Protocol Overview {#2-protocol-overview}
 
+*PSFI-1347 knowledge-model cross-reference drafted by a Codex agent, 2026-08-31.*
+
 ### 2.1 Design Philosophy
 
 M4P is built for intermittently connected, bandwidth-constrained maritime networks with mobile nodes, high latency, and modest scale (typically tens to hundreds of nodes).
@@ -22,7 +24,10 @@ M4P is built for intermittently connected, bandwidth-constrained maritime networ
 
 - **Local broadcast + store-carry-forward.** Transmissions are sent as modality-local broadcast; receiving nodes may store and forward packets as later link opportunities appear (see [Section 9.1](#91-store-carry-forward-model)). End-to-end paths are not assumed at send time.
 - **Local decisions, no global routing.** Nodes do not require global routing tables, topology convergence, or centralized coordination. Forwarding, address management, conflict resolution, and peer discovery operate through local observation and peer state exchange.
-- **Dissemination over path optimality.** Scheduling prioritizes packets likely to add the most new information to peers, rather than shortest-path routing. Dispersion-aware scheduling is optional and interoperable (see [Section 9.10](#910-dispersion-aware-scheduling-mesh-modalities)).
+- **Dissemination over path optimality.** Scheduling prioritizes records likely to add the most
+  new information to peers rather than shortest-path routing. The local knowledge model remains
+  interoperable because only protocol records, not node-local beliefs, are sent on the wire (see
+  [Section 9.10](#910-knowledge-driven-scheduling)).
 - **Bandwidth-aware transport, bandwidth-agnostic applications.** Applications produce messages without per-link tuning; transport adapts per modality by selecting and packing the highest-value packets within each payload budget (see [Section 9.4](#94-priority-and-scheduling) through [Section 9.7](#97-link-opportunities-and-transmission-building)).
 - **Wire efficiency first.** Header overhead is minimized for small payload budgets (for example, an 8-byte Status header, Compact Type Encoding in [Section 4.2](#42-compact-type-encoding-cte), and nonce derivation from existing header fields).
 - **Static baseline, dynamic runtime convergence.** Nodes are pre-provisioned with network-wide constants (`network_id`, addressing mode, payload cipher settings, claim expiration interval, and per-message-type transport defaults; see [Section 2.4](#24-network-wide-configuration)). Runtime state (peer membership, address mappings/conflicts, and forwarding opportunities) converges through NC exchange and local observation.
@@ -226,7 +231,7 @@ The effective TTL range remains bounded below this window (maximum encodable TTL
 | **Fragment** | Portion of a Message split across multiple Packets when the payload exceeds a DataLink's budget. All Fragments share the same MIID and Message Type ID. | [Section 8](#8-fragmentation-and-reassembly) |
 | **Transmission** | One send operation on a DataLink; contains one or more serialized Packets plus the sender's NA. | [Section 9.7](#97-link-opportunities-and-transmission-building) |
 | **DataLink** | Modality adapter connecting M4P to a physical communication layer. Exposes transmission opportunities and payload budgets; encapsulates all modality-specific mechanics. A node may have multiple DataLinks active simultaneously. | [Section 10](#10-datalink-abstraction) |
-| **Modality** | Class of data link technology (acoustic, radio, satellite, LAN, IP/MQTT). Classified as **infrastructure** (reliable delivery to all peers; rebroadcast is redundant) or **mesh** (range-limited/lossy; multi-hop rebroadcast propagates packets). | [Section 9.8.2](#982-infrastructure-and-mesh-modality-forwarding) |
+| **Modality** | Class of data link technology from the canonical vocabulary (`acoustic`, `radio`, `satellite`, `lan`, `wan`). Operator/API parsers may accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but emitters use `wan`. Modalities are classified as **infrastructure** (reliable delivery to all peers; rebroadcast is redundant) or **mesh** (range-limited/lossy; multi-hop rebroadcast propagates packets). | [Section 9.8.2](#982-infrastructure-and-mesh-modality-forwarding) |
 
 **Message fields.** A Message carries required fields (Message Type ID, payload), a destination ClientUID for directed Request/Response traffic, and optional overrides (priority, TTL, modality mask, status key for Status only, authentication tag). Field definitions are in [Section 5.7.6](#576-optional-field-definitions).
 
@@ -283,7 +288,7 @@ erDiagram
         string adapter_type "Modality-specific adapter"
     }
     MODALITY {
-        string name "acoustic / radio / satellite / LAN / IP-MQTT"
+        string name "acoustic / radio / satellite / lan / wan"
     }
 ```
 
