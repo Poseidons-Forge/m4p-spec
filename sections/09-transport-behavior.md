@@ -182,10 +182,14 @@ created by a resend timer.
 
 #### 9.3.1 Common Spacing Ladder
 
-The first send after insertion or an audience reset MAY use the first eligible opportunity. After
-a successful send on one DataLink adapter, that record MUST NOT be sent again on the same link and
-audience before the configured spacing interval has elapsed. If `n` is the number of successful
-sends since the audience reset, the interval before the next send is:
+The first send after insertion or an audience reset MAY use the first eligible opportunity. A
+fragment that strictly extends sent coverage while leaving the record incomplete is neither gated
+by the spacing ladder nor counted by it. The fragment completing sent coverage counts as the
+record's first complete offering. After any counted successful send on one DataLink adapter, that
+record MUST NOT be sent again on the same link and audience before the configured spacing interval
+has elapsed. Unfragmented sends and fragments repeating already-covered ranges always count. If
+`n` is the number of counted successful sends since the audience reset, the interval before the
+next send is:
 
 ```text
 minimum_spacing(class) * spacing_multiplier^min(n - 1, maximum_exponent)

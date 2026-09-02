@@ -123,7 +123,11 @@ message entered its queue. It MUST NOT mean or imply peer delivery. Peer
 delivery requires delivery confirmation or receipt evidence.
 
 Every `sent` outcome increments the opportunity's spacing-ladder send count
-`n`. A `failed` or `timed_out` outcome for a targeted send increments the
+`n`, except a fragment that strictly extends sent coverage while leaving the
+record incomplete; such a continuation is neither gated by the ladder nor
+counted by it. The fragment completing sent coverage increments `n`, as do
+unfragmented sends and fragments repeating already-covered ranges. A `failed`
+or `timed_out` outcome for a targeted send increments the
 directed pairwise failure count `f`. A broadcast failure has no sound peer to
 which a failure can be assigned and is therefore diagnostics only. `busy`
 declines the opportunity and is neither a send nor peer evidence.
