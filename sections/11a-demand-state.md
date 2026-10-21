@@ -75,9 +75,9 @@ For address width `A` bytes, `G` groups, and per-group counts `W_g` and `S_g`, t
 1 + sum(g = 1..G, A + 2 + 3*W_g + (3 + A)*S_g)
 ```
 
-The NC Announce header contributes `6 + A` bytes. Consequently, one group containing one wanting
-entry and no satisfied entry occupies 14 bytes on the wire in 8-bit mode and 16 bytes in 16-bit
-mode.
+The NC Announce header contributes `7 + A` bytes ([Section 5.5.1](#551-nc-announce-header)).
+Consequently, one group containing one wanting entry and no satisfied entry occupies 15 bytes on
+the wire in 8-bit mode and 17 bytes in 16-bit mode.
 
 #### 11.11.2 Authorship, Validation, and Supersession
 
