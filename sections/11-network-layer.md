@@ -821,7 +821,7 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Relaying.** Renewals are forwarded across mesh links as well as infrastructure links, so a node hidden from a peer keeps that peer's lease fresh through a neighbor (PSFI-2358). Ordinary knowledge-based forwarding applies: a renewal is not relayed onto a link whose peers already hold it, so when every node hears every other, no renewal is relayed. In addition:
 - A node retains only the newest renewal of each chunk of each node. A chunk is identified by the source node and the first client address it carries (a renewal without clients has no client key), so later chunks do not supersede earlier ones. A copy whose `node_claim_renewal_ts` is not newer than the retained one never replaces it.
-- A relay forwards a given node's renewal (per chunk) onto a given link at most once per `renewal_relay_min_interval`, a network configuration parameter (RECOMMENDED 4 hours). The originator's own renewals are never limited.
+- A relay forwards a given node's renewal (per chunk) onto a given mesh link at most once per `renewal_relay_min_interval`, a network configuration parameter (RECOMMENDED 4 hours). Infrastructure links are not limited, and the originator's own renewals are never limited.
 
 #### 11.7.15 NC_CLIENT_ADDRESS_RESOLVE_QUERY (32,017)
 
