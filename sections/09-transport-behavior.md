@@ -216,7 +216,16 @@ Spacing is a floor, not a target cadence. Once the floor opens, the record still
 packing by effective priority, estimated novel utility, and wire size. Tick-driven opportunities
 use recommended novelty admission floors of `0.02` on mesh links and `0.15` on infrastructure
 links; explicitly offered opportunities use `0.005` total audience novelty. These floors bound
-low-value retransmission without scheduling any send.
+low-value retransmission without scheduling any send. Recent reception MUST NOT be a prerequisite
+for transmission. When no peer in an opportunity's audience has been heard recently, implementations
+SHOULD omit reachability from novelty (equivalently, use a neutral multiplier of `1`) while retaining
+per-message holding evidence. An empty audience uses a virtual peer with zero holding. This permits
+ordinary scheduling to recover after silence or link re-enablement without a discovery handshake.
+Equal-value candidates SHOULD prefer the least recently sent target, with never-sent targets first.
+
+This silent-audience fallback replaces presence-gated admission, which could leave both ends of an
+enabled link waiting for the other to transmit. It changes selection, not delivery evidence or
+transport budgets. (Revision 2026-09-08; drafted by a Codex agent.)
 
 #### 9.3.2 Request and Response Termination
 
@@ -565,8 +574,9 @@ The following guidance keeps the estimator conservative:
 - The passage of time may lower a reachability estimate, but MUST NOT erase a confirmed holding
   fact.
 - Evidence that a peer lacks a record may reopen that record's spacing state immediately.
-- Unknown or absent peers are treated as novel enough to bootstrap discovery rather than as
-  already covered.
+- Unknown or absent peers MUST NOT be treated as already covered merely because they are silent.
+  When the entire audience is silent, apply the reachability fallback in Section 9.3.1; confirmed
+  holding still suppresses redundant traffic, including Responses acknowledged over another link.
 - Network Control records whose forwarding scope is not None use the same novelty and spacing
   model as application records.
 - Selection remains deterministic for fixed state and opportunities; model uncertainty does not
