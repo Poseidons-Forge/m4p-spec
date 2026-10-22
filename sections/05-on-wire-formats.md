@@ -149,7 +149,7 @@ Offset  Field                          Width
   ...   payload                        payload_length B
 ```
 
-**Header size:** 7 bytes (8-bit addressing) or 8 bytes (16-bit addressing).
+**Header size:** 8 bytes (8-bit addressing) or 9 bytes (16-bit addressing): 2-byte type, source NA, 3-byte `timestamp_24h | msg_counter`, 2-byte `payload_length`.
 
 #### 5.5.2 NC Targeted Header
 
@@ -166,7 +166,7 @@ Offset  Field                          Width
   ...   payload                        payload_length B
 ```
 
-**Header size:** 8 bytes (8-bit addressing) or 10 bytes (16-bit addressing).
+**Header size:** 9 bytes (8-bit addressing) or 11 bytes (16-bit addressing): 2-byte type, destination and source NAs, 3-byte `timestamp_24h | msg_counter`, 2-byte `payload_length`.
 
 ### 5.6 Field Definitions
 

@@ -117,17 +117,13 @@ Nodes MUST periodically re-broadcast their address claims to keep them active. T
 
 Both refresh `claim_renewal_timestamp` values and keep claims active.
 
-The recommended broadcast interval for NC_NODE_SUMMARY and NC_CLAIM_RENEWAL is:
+A node broadcasts NC_NODE_SUMMARY or NC_CLAIM_RENEWAL every `renewal_interval`, a network-wide configuration parameter that MUST be less than `expiration_interval`. The RECOMMENDED value is 30 minutes against a 24-hour `expiration_interval`: many renewal opportunities per lease, so a lossy link loses a lease only after a long silence.
 
-```text
-summary_broadcast_interval = expiration_interval / 2
-```
-
-Broadcasting at half-interval provides at least two renewal opportunities per expiration window. Deployments with very high loss MAY use a smaller fraction (for example, `expiration_interval / 3` or `expiration_interval / 4`).
+> **History:** earlier drafts recommended `expiration_interval / 2` (12 hours for a 24-hour lease). Implementations renew every `renewal_interval`, 30 minutes by default; the spec now names that parameter instead (PSFI-2358).
 
 **[GUIDANCE] NC summary scheduling on constrained links.** On mesh links, each summary interval produces one self-broadcast per node. Deployments SHOULD manage this overhead by:
 
-- **Temporal jitter.** Add random jitter (up to `summary_broadcast_interval / N`) to stagger broadcasts and reduce clustering.
+- **Temporal jitter.** Add random jitter (up to `renewal_interval / N`) to stagger broadcasts and reduce clustering.
 - **Short UIDs.** Keep node and client UIDs short; UID strings dominate summary size.
 - **Expiration interval scaling.** For large fleets on severely constrained links, use longer `expiration_interval` values to reduce summary frequency.
 - **Constrained-link fallback.** On modalities where the full NC_NODE_SUMMARY exceeds the payload budget, nodes SHOULD send NC_CLAIM_RENEWAL instead ([Section 11.7.14](#11714-nc_claim_renewal-32004)).
@@ -294,7 +290,10 @@ Targeted header ([Section 5.5.2](#552-nc-targeted-header)). Queries follow the c
 model until a receiver can resolve every queried item. Such a resolver MUST absorb the query and
 MUST emit the corresponding targeted answer; partial resolution MAY emit partial answers but does
 not absorb the full query. If several nodes can resolve a query, each MAY answer, and the querier
-accepts the first valid answer and discards duplicates.
+accepts the first valid answer and discards duplicates. What resolves an item is defined per query
+type; for a known-incarnation NC_NODE_UID_QUERY entry, only the node itself or a holder of a
+strictly newer renewal of that incarnation resolves it ([Section 11.7.8](#1178-nc_node_uid_query-32013)),
+so a holder no fresher than the asker forwards the query instead of swallowing it.
 
 > [GUIDANCE] A resolver answering from learned (non-local) state may return stale data. This is acceptable in DTN operation: stale mappings are corrected by address versioning (Section 11.1), fingerprint-triggered refresh (Section 11.9.4), and periodic NC_NODE_SUMMARY convergence (Section 11.7.1).
 
@@ -323,7 +322,7 @@ catalog values keep protocol NC above routine data while bounding retained state
 | 32,001 | NC_NETWORK_STATE_REQUEST | Announce | None | 120 | 120 s | Link-local bulk sync request |
 | 32,002 | NC_NETWORK_STATE_RESPONSE | Announce | None | 120 | 120 s | Link-local bulk sync response |
 | 32,003 | Fragment NACK | Targeted | Everywhere | 160 | 120 s | Retransmission request |
-| 32,004 | NC_CLAIM_RENEWAL | Announce | Infrastructure only | 80 | 3,600 s | Periodic claim maintenance |
+| 32,004 | NC_CLAIM_RENEWAL | Announce | Everywhere | 80 | 3,600 s | Periodic claim maintenance |
 | 32,005 | NC_NETWORK_STATE_DIGEST | Announce | None | 80 | 300 s | Link-local state comparison |
 | 32,010 | NC_NODE_ADDRESS_CLAIM | Announce | Everywhere | 240 | 3,600 s | Network formation |
 | 32,011 | NC_CLIENT_ADDRESS_CLAIM | Announce | Everywhere | 240 | 3,600 s | Network formation |
@@ -348,7 +347,7 @@ catalog values keep protocol NC above routine data while bounding retained state
 
 **When sent:**
 - On node startup (after address assignment).
-- Periodically at `expiration_interval / 2` (see [Section 11.3.2](#1132-refresh-mechanism)).
+- Periodically every `renewal_interval` (see [Section 11.3.2](#1132-refresh-mechanism)).
 - When the node's address or hosted client set changes.
 
 **Payload:**
@@ -477,7 +476,7 @@ This is an **optional bootstrap optimization**; correctness does not depend on i
 **When sent:**
 - On node startup.
 - After re-addressing due to conflict loss.
-- Periodically alongside NC_NODE_SUMMARY or NC_CLAIM_RENEWAL (at `expiration_interval / 2`). On modalities where NC_CLAIM_RENEWAL is used as the refresh mechanism, the renewal satisfies the periodic claim obligation — separate explicit claims are not required.
+- Periodically alongside NC_NODE_SUMMARY or NC_CLAIM_RENEWAL (every `renewal_interval`). On modalities where NC_CLAIM_RENEWAL is used as the refresh mechanism, the renewal satisfies the periodic claim obligation — separate explicit claims are not required.
 
 **Payload:**
 
@@ -513,7 +512,7 @@ This is an **optional bootstrap optimization**; correctness does not depend on i
 **When sent:**
 - When a client registers on the node.
 - After re-addressing due to conflict loss.
-- Periodically alongside NC_NODE_SUMMARY or NC_CLAIM_RENEWAL (at `expiration_interval / 2`). On modalities where NC_CLAIM_RENEWAL is used as the refresh mechanism, the renewal satisfies the periodic claim obligation — separate explicit claims are not required.
+- Periodically alongside NC_NODE_SUMMARY or NC_CLAIM_RENEWAL (every `renewal_interval`). On modalities where NC_CLAIM_RENEWAL is used as the refresh mechanism, the renewal satisfies the periodic claim obligation — separate explicit claims are not required.
 
 **Payload:**
 
@@ -609,12 +608,14 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 
 #### 11.7.8 NC_NODE_UID_QUERY (32,013)
 
-**Purpose:** WHOIS query for one or more Node Addresses with unknown identity mapping.
+**Purpose:** WHOIS query for Node Addresses with unknown identity mapping, and the "ask before dropping" question for a peer whose lease is nearing its end ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
 
 **Wire class:** Query. **Forwarding scope:** Everywhere.
 
 **When sent:**
-- When a node encounters one or more Node Addresses (in data traffic, NC messages, or transmission metadata) for which it has no known identity mapping.
+- When a node encounters one or more Node Addresses (in data traffic, NC messages, or transmission metadata) for which it has no known identity mapping (unknown entries).
+- Before dropping a TDMA participant: from `lease_query_lead` before the participant's lease ends (`claim_renewal_ts + expiration_interval`), asking about the incarnation the node holds (a known entry). It repeats at a spacing of at least a quarter of the lead until the renewal advances out of that window or the lease lapses. `lease_query_lead` is a configuration parameter, RECOMMENDED one hour against a 24-hour lease.
+- When a received NC_TDMA_SCHEDULE lists a peer this node dropped for a lapsed lease (a known entry), rate-limited per peer.
 - Multiple unknown addresses SHOULD be batched into a single query to reduce transmit overhead on constrained links.
 - Rate-limited to avoid excessive query traffic.
 
@@ -626,22 +627,37 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 +-----------------------------------------------+
 | repeat queried_address_count times:            |
 |   queried_node_address (NA width)              |
+|   known_address_version  (u16)                 |
+|   known_claim_origin_ts  (u32)                 |
+|   known_claim_renewal_ts (u32)                 |
 +-----------------------------------------------+
 ```
 
-**Payload size:** `1 + C` bytes (8-bit) | `1 + 2C` bytes (16-bit), where C = `queried_address_count`.
+**Payload size:** `1 + 11C` bytes (8-bit) | `1 + 12C` bytes (16-bit), where C = `queried_address_count`. One entry is a 20-byte (8-bit) or 22-byte (16-bit) packet.
 
-**Receiver behavior:**
-- Apply shared query receiver handling; resolver eligibility includes self-identity and learned mappings.
+Each entry carries the asker's knowledge of the address:
+- **Unknown entry:** version, origin and renewal are all zero. The asker needs the uid.
+- **Known entry:** `known_claim_origin_ts` is non-zero; the entry names the incarnation `(node_address, known_address_version, known_claim_origin_ts)` the asker holds and the renewal time it holds for it.
+
+An entry with a zero origin and a non-zero version or renewal names no incarnation; the payload is malformed and MUST be dropped. `queried_address_count = 0` is malformed.
+
+**Receiver behavior (resolver rule):**
+- An unknown entry is resolved by the queried node itself or by any holder of the address's mapping (shared query receiver handling).
+- A known entry is resolved only by:
+  - the node holding that address itself. If its current incarnation is the one named, it answers with the uid omitted ([Section 11.7.9](#1179-nc_node_uid_answer-32014)) and its renewal time; otherwise it answers with its full current record.
+  - a holder of the same `(node_address, address_version, claim_origin_ts)` with a renewal time strictly newer than `known_claim_renewal_ts`. It answers with the uid omitted and its renewal time.
+- Any other receiver MUST NOT absorb or answer a known entry; it forwards the query unchanged. A holder no fresher than the asker therefore cannot swallow the question on its way to a node that can answer.
+
+**Layout change (in place).** Entries gained the known-incarnation fields in place, keeping type 32,013; NC layouts change in place and land in a coordinated daemon update. A receiver of the earlier layout (`count · repeat NA`) rejects the new bytes as malformed rather than misreading them: for every `C ≥ 1` the payload is `10C` bytes longer than that layout allows, so its trailing-bytes check fails.
 
 #### 11.7.9 NC_NODE_UID_ANSWER (32,014)
 
-**Purpose:** Targeted WHOIS answer for Node Address ownership.
+**Purpose:** Targeted WHOIS answer for Node Address ownership, or a fresher renewal time for an incarnation the asker already holds.
 
 **Wire class:** Targeted. **Forwarding scope:** Everywhere.
 
 **When sent:**
-- In response to an NC_NODE_UID_QUERY that the node can resolve (either is the queried node itself or has previously learned the mapping from other nodes).
+- In response to an NC_NODE_UID_QUERY entry the node resolves ([Section 11.7.8](#1178-nc_node_uid_query-32013)): an unknown entry (the node is the queried node or has learned the mapping), or a known entry (the node is that node, or holds a strictly newer renewal of the named incarnation).
 
 **Payload:**
 
@@ -660,11 +676,16 @@ The host NodeUID is omitted; `host_node_address` provides routing context, and N
 +-----------------------------------------------+
 ```
 
-**Payload size:** `12 + N` bytes (8-bit) | `13 + N` bytes (16-bit), where N = `node_uid_len`.
+**Payload size:** `12 + N` bytes (8-bit) | `13 + N` bytes (16-bit), where N = `node_uid_len`. An answer without the uid is a 21-byte (8-bit) or 24-byte (16-bit) packet.
+
+**Omitted uid.** `node_uid_len = 0` means "the uid you hold for this address and version": it answers a known query entry, so the asker already has the uid. It is valid only with a non-zero `claim_origin_ts`; an answer with no uid and a zero origin is malformed and MUST be dropped. Every other NC uid field still requires a non-empty uid.
+
+**Layout change (in place).** The omitted-uid form is new and keeps type 32,014. A receiver of the earlier layout rejects it as malformed rather than mapping the address to an empty uid, because that layout requires `node_uid_len ≥ 1`. Answers carrying the uid keep the earlier layout.
 
 **Receiver behavior:**
-- Apply shared mapping-update handling.
-- If the answer was for a locally originated query, mark that query as answered.
+- An answer carrying the uid applies shared mapping-update handling.
+- An answer without the uid is accepted only when `(node_address, address_version, claim_origin_ts)` matches the receiver's mapping exactly; the receiver then sets `claim_renewal_ts = max(stored, incoming)` and changes nothing else. Otherwise it is ignored.
+- If the answer was for a locally originated query, mark that query as answered. An ask-before-dropping question is answered only by an accepted answer that moves the renewal time out of the asking window.
 
 #### 11.7.10 NC_NODE_ADDRESS_CONFLICT (32,020)
 
@@ -764,10 +785,10 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 **Purpose:** Lightweight claim refresh for constrained links where NC_NODE_SUMMARY exceeds the payload budget.
 
-**Wire class:** Announce. **Forwarding scope:** Infrastructure only.
+**Wire class:** Announce. **Forwarding scope:** Everywhere.
 
 **When sent:**
-- Periodically at `expiration_interval / 2`, on modalities where the node's NC_NODE_SUMMARY does not fit within the available payload budget.
+- Periodically every `renewal_interval` ([Section 11.3.2](#1132-refresh-mechanism)), on modalities where the node's NC_NODE_SUMMARY does not fit within the available payload budget.
 - SHOULD NOT be sent on modalities where the full NC_NODE_SUMMARY fits.
 
 **Payload:**
@@ -796,7 +817,11 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 - For each client claim: if `client_address` matches a known mapping **hosted by the same node**, update `claim_renewal_ts` using `stored = max(stored, incoming)`. If the address is unknown or mapped to a different host node, ignore it.
 - A receiver MAY emit NC_NODE_UID_QUERY for an unrecognized `node_address` to learn the full mapping, subject to existing query rate-limiting and duplicate-suppression rules ([Section 11.7.8](#1178-nc_node_uid_query-32013)).
 
-**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement.
+**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement. Clients are sorted by address before splitting.
+
+**Relaying.** Renewals are forwarded across mesh links as well as infrastructure links, so a node hidden from a peer keeps that peer's lease fresh through a neighbor (PSFI-2358). Ordinary knowledge-based forwarding applies: a renewal is not relayed onto a link whose peers already hold it, so when every node hears every other, no renewal is relayed. In addition:
+- A node retains only the newest renewal of each chunk of each node. A chunk is identified by the source node and the first client address it carries (a renewal without clients has no client key), so later chunks do not supersede earlier ones. A copy whose `node_claim_renewal_ts` is not newer than the retained one never replaces it.
+- A relay forwards a given node's renewal (per chunk) onto a given mesh link at most once per `renewal_relay_min_interval`, a network configuration parameter (RECOMMENDED 4 hours). Infrastructure links are not limited, and the originator's own renewals are never limited.
 
 #### 11.7.15 NC_CLIENT_ADDRESS_RESOLVE_QUERY (32,017)
 
@@ -1124,7 +1149,7 @@ Network-level discovery operates through NC messages and provides multi-hop iden
 - **NC_NODE_SUMMARY / NC_CLAIM_RENEWAL**: Periodic broadcasts provide baseline discovery and liveness. NC_NODE_SUMMARY carries full identity and client data; NC_CLAIM_RENEWAL refreshes timestamps only on constrained links.
 - **NC_NETWORK_STATE_REQUEST / NC_NETWORK_STATE_RESPONSE**: Bulk bootstrap and link-local convergence — the joining node broadcasts a request on high-bandwidth links; peers respond with their known mappings, suppressing redundant responses through jitter-based observation.
 - **NC_*_ADDRESS_CLAIM**: Explicit claims propagate address mappings as they change.
-- **NC_NODE_UID_QUERY / NC_NODE_UID_ANSWER**: On-demand resolution for unknown NAs encountered in traffic or NC messages.
+- **NC_NODE_UID_QUERY / NC_NODE_UID_ANSWER**: On-demand resolution for unknown NAs encountered in traffic or NC messages, and the ask-before-dropping question for a TDMA participant's lease ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
 - **NC_CLIENT_UID_QUERY / NC_CLIENT_UID_ANSWER**: On-demand resolution for unknown CAs encountered in data traffic.
 - **NC_CLIENT_ADDRESS_RESOLVE_QUERY / NC_CLIENT_ADDRESS_RESOLVE_ANSWER**: On-demand resolution for unknown ClientUIDs when the transport needs to route an outbound directed message (reverse direction: UID → CA).
 
@@ -1147,7 +1172,7 @@ These mappings are populated and updated by NC messages (summaries, renewals, cl
 
 #### 11.9.4 Accelerated Client Address Convergence
 
-The periodic refresh cadence (`expiration_interval / 2` for NC_NODE_SUMMARY or NC_CLAIM_RENEWAL) guarantees eventual liveness, but the convergence window can be hours long. A node returning from downtime may therefore hold stale `CA -> ClientUID` mappings until fresh summaries arrive.
+The periodic refresh cadence (`renewal_interval` for NC_NODE_SUMMARY or NC_CLAIM_RENEWAL) guarantees eventual liveness, but the convergence window can be hours long. A node returning from downtime may therefore hold stale `CA -> ClientUID` mappings until fresh summaries arrive.
 
 On high-bandwidth links (LAN, MQTT), NC_NETWORK_STATE_REQUEST triggers link-local broadcast responses from peers, enabling fast bulk refresh and convergence. On constrained links, response size limits make bulk refresh impractical. The client address fingerprint mechanism provides low-overhead staleness detection across all modalities.
 
@@ -1385,7 +1410,7 @@ Nodes may operate with divergent TDMA schedules when schedule-changing events (N
 
 Two mechanisms provide schedule convergence:
 
-**Passive convergence (NC_NODE_SUMMARY).** Each node's periodic NC_NODE_SUMMARY includes its TDMA modality participation ([Section 11.7.1](#1171-nc_node_summary-32000)). A node that receives a summary listing a TDMA modality from a peer not in its local participant list SHOULD add that peer and recompute the schedule. This provides eventual convergence bounded by the NC_NODE_SUMMARY broadcast cadence (`expiration_interval / 2`).
+**Passive convergence (NC_NODE_SUMMARY).** Each node's periodic NC_NODE_SUMMARY includes its TDMA modality participation ([Section 11.7.1](#1171-nc_node_summary-32000)). A node that receives a summary listing a TDMA modality from a peer not in its local participant list SHOULD add that peer and recompute the schedule. This provides eventual convergence bounded by the NC_NODE_SUMMARY broadcast cadence (`renewal_interval`).
 
 **Active detection (sender-slot mismatch).** A node participating in M4P-managed TDMA knows which node is expected to transmit in each slot according to its local schedule. When a node receives a transmission whose `node_address_sender` ([Section 5.8](#58-transmission-encoding)) does not match the expected slot owner at the time of reception, the node has detected schedule divergence.
 
@@ -1399,7 +1424,13 @@ This reconciliation is self-limiting: once the stale node updates its schedule, 
 
 **Join-case convergence.** When divergence is caused by a missed NC_TDMA_JOIN, reconciliation is straightforward: the detecting node receives an NC_TDMA_SCHEDULE listing the unknown participant, verifies the participant's claim is active, adds it, and recomputes. Convergence is fast — bounded by the next transmission in the misaligned slot.
 
-**Departure-case convergence.** When divergence is caused by a missed departure (claim expiration), nodes may disagree on whether a departed node's claim is still active because they hold different `claim_renewal_timestamp` values for that peer. NC_TDMA_SCHEDULE exchange cannot resolve this disagreement — each node's local expiration computation is based on the last renewal it received. Convergence relies on claim expiration firing independently on each node, bounded by `expiration_interval`. Explicit departure signaling ([Section 13.4](#134-graceful-tdma-departure)) is a future feature that would eliminate this convergence gap.
+**Departure-case convergence.** A node leaves every TDMA schedule when its lease lapses: `claim_is_active(now, claim_renewal_ts, expiration_interval)` turns false, judged on the local clock against the renewal time the node holds. Nodes holding the same renewal time drop the peer at the same instant. Nodes can hold different renewal times for a peer they cannot all hear; three mechanisms keep them in agreement:
+
+- **Renewal relay.** NC_CLAIM_RENEWAL is forwarded across mesh links within `renewal_relay_min_interval` ([Section 11.7.14](#11714-nc_claim_renewal-32004)), so a node hidden from a peer still learns its renewals.
+- **Ask before dropping.** From `lease_query_lead` before a participant's lease ends, a node asks for a fresher renewal with a known-incarnation NC_NODE_UID_QUERY ([Section 11.7.8](#1178-nc_node_uid_query-32013)). The peer itself, or any node holding a newer renewal of that incarnation, answers; a peer that is really gone stays unanswered, and every node drops it from the same last renewal time. A node that receives NC_TDMA_SCHEDULE listing a peer it dropped asks the same question.
+- **Rejoin on renewal.** Dropping a peer for a lapsed lease (a silence drop) is a local judgement: it is never announced and never becomes a departure. The dropping node remembers the peer's incarnation and the modalities it held. When a renewal of the same incarnation (same address, version and claim origin) with a strictly newer renewal time makes the lease active again, the node re-adds the peer to those modalities directly. Its claim origin is unchanged, so it returns at its original slot order; no join, summary or query is needed.
+
+NC_TDMA_SCHEDULE exchange alone still cannot settle a departure, because schedules carry addresses only; it triggers the question above instead. Explicit departure signaling ([Section 13.4](#134-graceful-tdma-departure)) remains future work for a node that leaves on purpose.
 
 #### 11.10.8 TDMA Receipt Evidence
 
