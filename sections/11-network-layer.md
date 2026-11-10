@@ -141,11 +141,13 @@ A node can detect that its own claim has lapsed by checking:
 now - last_broadcast_renewal_timestamp >= expiration_interval
 ```
 
-This occurs when a node has been unable to broadcast for longer than the expiration interval. When a node detects that its own claim has lapsed, it MUST treat the next broadcast as a **new claim**:
+This occurs when a node has been unable to broadcast for longer than the expiration interval. When a node detects that its own claim has lapsed, it MUST treat the next broadcast as a **new claim**, and MUST NOT renew the lapsed claim:
 
-- Set `claim_origin_timestamp = now()` (the node is now a new claimant, not the original holder).
+- Set `claim_origin_timestamp = now()` (the node is now a new claimant, not the original holder), or the last origin it issued + 1 when the clock is at or behind it ([Section 11.2](#112-claim-timestamps)).
 - Set `claim_renewal_timestamp = now()`.
 - Retain the existing `address` and `address_version` (attempt reclaim of the prior address).
+
+Peers see a later origin for the same node UID and replace the lapsed claim ([Section 11.1](#111-address-derivation-and-versioning)). A node that keeps its address keeps its TDMA slot order, which follows the address ([Section 11.10.1](#11101-slot-assignment-algorithm)).
 
 If the address was taken during the lapse, normal conflict rules make the returning node lose (later `claim_origin_timestamp`) and re-address, preventing displacement of an established holder.
 
