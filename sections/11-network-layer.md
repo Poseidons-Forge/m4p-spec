@@ -131,7 +131,7 @@ A node broadcasts NC_NODE_SUMMARY or NC_CLAIM_RENEWAL every `renewal_interval`, 
 - **Expiration interval scaling.** For large fleets on severely constrained links, use longer `expiration_interval` values to reduce summary frequency.
 - **Constrained-link fallback.** On modalities where the full NC_NODE_SUMMARY exceeds the payload budget, nodes SHOULD send NC_CLAIM_RENEWAL instead ([Section 11.7.14](#11714-nc_claim_renewal-32004)).
 
-**Sizing reference:** Per-node summary payload is approximately `(14 + L_node + C × (12 + L_client) + T × (1 + L_modality))` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths, `C` is hosted client count, `T` is TDMA modality count, and `L_modality` is average modality name length. For nodes with no M4P-managed TDMA participation, the overhead is 1 byte (`tdma_modality_count = 0`).
+**Sizing reference:** Per-node summary payload is approximately `(14 + L_node + C × (12 + L_client) + T × (2 + L_modality))` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths, `C` is hosted client count, `T` is TDMA modality count, and `L_modality` is average modality name length. For nodes with no M4P-managed TDMA participation, the overhead is 1 byte (`tdma_modality_count = 0`).
 
 #### 11.3.3 Lapsed Claim Detection
 
@@ -380,10 +380,6 @@ catalog values keep protocol NC above routine data while bounding retained state
 |   client_claim_renewal_ts (u32)                |
 |   client_uid_len       (u8)                    |
 |   client_uid           (client_uid_len B)      |
-| tdma_modality_count    (u8)                    |
-| repeat tdma_modality_count times:              |
-|   tdma_modality_len    (u8)                    |
-|   tdma_modality_name   (tdma_modality_len B)   |
 +-----------------------------------------------+
 | tdma_modality_count    (u8)                    |
 +-----------------------------------------------+
@@ -391,15 +387,23 @@ catalog values keep protocol NC above routine data while bounding retained state
 |   modality_name_len    (u8)                    |
 |   modality_name        (modality_name_len B)   |
 +-----------------------------------------------+
+| repeat tdma_modality_count times:              |
+|   schedule_hash        (u8, high bit 0)        |
++-----------------------------------------------+
 ```
 
-**Payload size:** `14 + N + C × (12 + Cᵢ) + T × (1 + Mⱼ)` bytes (8-bit) | `15 + N + C × (13 + Cᵢ) + T × (1 + Mⱼ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client, T = `tdma_modality_count`, and Mⱼ = `modality_name_len` for each TDMA modality.
+**Payload size:** `14 + N + C × (12 + Cᵢ) + T × (2 + Mⱼ)` bytes (8-bit) | `15 + N + C × (13 + Cᵢ) + T × (2 + Mⱼ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client, T = `tdma_modality_count`, and Mⱼ = `modality_name_len` for each TDMA modality.
 
 The `tdma_modality_count` field lists the modalities for which this node participates in M4P-managed TDMA ([Section 11.10](#1110-tdma-slot-allocation)). A value of `0` indicates no M4P-managed TDMA participation. The modality list reflects all registered M4P-managed TDMA links, not just currently-connected ones — a link that is temporarily disconnected does not cause the node to stop advertising that modality. This field provides steady-state reinforcement of TDMA modality participation through periodic NC_NODE_SUMMARY rebroadcast; event-driven announcement uses NC_TDMA_JOIN ([Section 11.7.17](#11717-nc_tdma_join-32030)).
 
+The `schedule_hash` fields follow all the modality names, one per name in the same order. Each is the sender's seven-bit whole-schedule hash ([Section 11.10.8](#11108-tdma-receipt-evidence)) for that modality, computed over the ordered participants and cycle geometry it holds when it builds the summary. They let two nodes see that their schedules differ over any link, before either transmits on the modality ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)). A sender MUST NOT encode a hash above `0x7f`.
+
 **Receiver behavior:**
 - Apply shared mapping-update handling and update node/client mapping state.
-- After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience.
+- After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience. Otherwise read the count, the names, then one `schedule_hash` per name; a payload that ends before every hash is read, or a hash above `0x7f`, is malformed.
+- Apply the TDMA membership and schedule-hash rules in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
+
+**Rationale (normative).** The hashes follow the names, rather than each hash following its name, so that a decoder built for the layout without hashes rejects the new payload instead of misreading it: it reads the count and every name exactly as before and then finds `tdma_modality_count` trailing bytes. Interleaved, such a decoder could read a hash as the next name's length and accept the payload with its modalities misread. With no modality the payload is byte-identical to the layout without hashes.
 
 #### 11.7.2 NC_NETWORK_STATE_REQUEST (32,001)
 
@@ -1315,9 +1319,9 @@ Because `node_address` is unique, the sort order is a function of the participan
 TDMA slot allocation requires knowing which nodes participate in which modalities. Nodes advertise their TDMA modality participation through two mechanisms:
 
 - **NC_TDMA_JOIN** ([Section 11.7.17](#11717-nc_tdma_join-32030)): Event-driven announcement when a node wants to join a TDMA modality. Fast, targeted.
-- **NC_NODE_SUMMARY** ([Section 11.7.1](#1171-nc_node_summary-32000)): Periodic rebroadcast includes the `tdma_modality_count` / `modality_name` extension. Steady-state reinforcement.
+- **NC_NODE_SUMMARY** ([Section 11.7.1](#1171-nc_node_summary-32000)): Periodic rebroadcast includes the `tdma_modality_count` / `modality_name` / `schedule_hash` extension. Steady-state reinforcement.
 
-Both mechanisms carry the same information: the set of modalities for which the node participates in M4P-managed TDMA. NC_TDMA_JOIN provides the initial announcement; NC_NODE_SUMMARY provides periodic convergence.
+Both mechanisms carry the set of modalities for which the node participates in M4P-managed TDMA. NC_TDMA_JOIN provides the initial announcement; NC_NODE_SUMMARY provides periodic convergence, and its per-modality schedule hash lets peers detect a schedule disagreement ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
 
 **Modality name matching.** Modality names are compared as byte-exact UTF-8 strings. Implementations MUST NOT apply case folding or normalization. Deployments MUST use identical modality name strings across all nodes participating in the same TDMA schedule. A mismatch (e.g., `"acoustic"` vs `"Acoustic"`) will cause nodes to compute independent schedules for what they treat as different modalities.
 
@@ -1418,7 +1422,7 @@ The schedule evolves continuously as peer knowledge changes. There is no distinc
 
 Nodes may operate with divergent TDMA schedules when schedule-changing events (NC_TDMA_JOIN, claim expiration) are not observed by all participants — for example, when a node is temporarily out of range during a join event. Because the TDMA round-robin pattern depends on the total participant count, even a single missing participant causes slot position misalignment and potential collisions.
 
-Three mechanisms provide schedule convergence:
+The following mechanisms provide schedule convergence:
 
 **Passive convergence (NC_NODE_SUMMARY).** Each node's periodic NC_NODE_SUMMARY includes its TDMA modality participation ([Section 11.7.1](#1171-nc_node_summary-32000)). A node that receives a summary listing a TDMA modality from a peer not in its local participant list SHOULD add that peer and recompute the schedule. This provides eventual convergence bounded by the NC_NODE_SUMMARY broadcast cadence (`renewal_interval`).
 
@@ -1436,11 +1440,24 @@ Three mechanisms provide schedule convergence:
 
 1. If it disagrees, the node SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list, with short random jitter and subject to the back-off below. Both kinds of disagreement share one back-off; neither queues a broadcast outside it.
 2. **Back-off.** Per modality, the first hash-triggered broadcast MAY go out at once. Each later one MUST wait at least the current interval after the previous one; the interval starts at one cycle (`contention_cadence`), doubles after each broadcast, and is capped at eight `schedule_suppression_window`s (two cycles each when that setting is zero).
-3. **Reset.** The node tracks, per modality, the peers whose most recent Transmission disagreed. A peer leaves that set when a Transmission from it carries the local hash in a data slot whose expected owner it is, or when it is no longer a participant. A contention-window Transmission carrying the local hash neither adds nor removes the peer. When the set is empty the back-off resets, and the next disagreement again broadcasts at once.
+3. **Reset.** The node tracks, per modality, the peers whose most recent Transmission or judged node summary disagreed. A peer leaves that set when a Transmission from it carries the local hash in a data slot whose expected owner it is, when its judged node summary states the local hash, or when it is no longer a participant. A contention-window Transmission carrying the local hash neither adds nor removes the peer. When the set is empty the back-off resets, and the next disagreement again broadcasts at once.
 
 **Rationale (normative).** Judging after the packets keeps joins with their designated responder: a join Transmission already carries the joiner's new hash, and judged before the join is applied every receiver would answer it at once. The back-off exists because a disagreeing peer's hash arrives on every frame it sends, unlike the other two triggers. The cap follows from the suppression window, the time one schedule exchange is given to settle: a mismatch that several exchanges did not settle has a cause one more exchange cannot fix (for example a lease one node judges lapsed and another active, which settles on a renewal or a lapse), so retries slow to one per eight windows rather than one per received frame, and repair still follows within eight windows of the cause clearing. The reset waits for every disagreeing peer because with three or more nodes one peer can agree while another still disagrees; resetting on the agreeing peer would answer every disagreeing frame. A different hash and a sender outside its slot share the back-off because they are the same fault seen two ways, and both arrive on every frame the disagreeing peer sends. A contention-window Transmission cannot clear a peer because it shows the hash but not the sender's timing: a peer whose clock is offset by a slot keeps the same hash while every data-slot frame it sends is out of slot, and no schedule exchange repairs a clock, so the back-off holds at its cap.
 
 [GUIDANCE] Earlier revisions only counted a whole-schedule mismatch and emitted an engineering event; reconciliation ran on sender-slot mismatch and on a schedule omitting a known participant. That could leave schedules diverged while every data slot collided, because collided frames produce no sender-slot evidence. A sender-slot mismatch also used to broadcast on every wrong-slot Transmission, without back-off.
+
+**Active detection (node summary hash).** NC_NODE_SUMMARY states the sender's whole-schedule hash for each modality it lists ([Section 11.7.1](#1171-nc_node_summary-32000)). Summaries travel on every link, so two nodes connected only by an infrastructure link can see that their schedules differ before either transmits on the modality.
+
+**[BEHAVIORAL]** On an NC_NODE_SUMMARY whose claim the node accepted or already held and whose sender's lease is active, after applying the summary's TDMA membership (passive convergence above), a node judges each listed modality it has joined:
+
+1. If the stated hash differs from the local whole-schedule hash, the summary disagrees: the node SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list, with short random jitter and subject to the same per-modality back-off as a disagreeing Transmission.
+2. If the stated hash equals the local one, the summary agrees, as in the reset rule above.
+3. The node MUST NOT judge a modality's hash within one `schedule_suppression_window` of a change to its own participant list for that modality, and judges nothing for a modality it has not joined.
+4. The stated hash MUST NOT change the participant list. It only triggers the schedule exchange; membership changes come from the summary's own facts, joins, schedules and leases as elsewhere in this section.
+
+**Rationale (normative).** A summary states the schedule its sender held when it was sent, which can be minutes old. A joiner's summary at confirmation names only what it knew then, and a summary sent while a join is spreading is behind the join; judged, every node would broadcast once per join past the designated-responder suppression, although the join and schedule messages already carry the change. The suppression window is the time one membership change is given to settle, so it bounds the rule without a new setting. An older summary that still disagrees after that costs at most one broadcast under the back-off, and because the exchange merges and never replaces a participant list, a stale summary cannot reorder a schedule.
+
+[GUIDANCE] The summary hash travels only when the summary does: once at address confirmation, once when the first link connects, and with each periodic refresh sent as a summary rather than as NC_CLAIM_RENEWAL ([Section 11.3.2](#1132-refresh-mechanism)). Where the periodic refresh falls back to NC_CLAIM_RENEWAL, the pre-dive check depends on those two events.
 
 This reconciliation is self-limiting: once the stale node updates its schedule, sender-slot and whole-schedule mismatches cease and no further reconciliation responses are triggered. The exchange is idempotent — each node independently validates participants against claim status and the deterministic algorithm ([Section 11.10.1](#11101-slot-assignment-algorithm)) produces the same schedule once both nodes have the same validated participant set.
 
@@ -1465,7 +1482,7 @@ Each receiver maintains a per-link opportunity table keyed by the UTC-derived `(
 
 For a Transmission by participant slot index `s`, bitmap bit `i` describes the latest physical opportunity owned by participant slot index `i` that occurred strictly before `s`'s current opportunity in the continuous round-robin schedule. The mapping crosses cycle boundaries: the first participant's bitmap refers to the preceding round, while a middle participant's bitmap combines earlier participants from the current round with later participants from the preceding round. The sender's own bit is unused.
 
-A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. A whole-schedule mismatch MUST increment a per-link counter and emit an engineering event. Both mismatches trigger the reconciliation in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation): both are judged again after the Transmission's packets are applied, and share one back-off.
+A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. A whole-schedule mismatch MUST increment a per-link counter and emit an engineering event. NC_NODE_SUMMARY states the same hash for each modality its sender has joined ([Section 11.7.1](#1171-nc_node_summary-32000)). Both mismatches trigger the reconciliation in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation): both are judged again after the Transmission's packets are applied, and share one back-off.
 
 For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is only a failure sample for the directed pairwise estimator and an input that voids any predicted receipt for that opportunity.
 
