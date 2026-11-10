@@ -55,8 +55,11 @@ The registration descriptors have these meanings:
 
 - `operating_envelope` is `surface`, `subsurface`, or `both`. Its default is
   `surface` for radio, LAN, WAN, and satellite links and `both` for acoustic
-  links. A link MAY override its modality default. It is an input to the peer
-  surface-state prior only; it is not reachability evidence.
+  links. A link MAY override its modality default. No core rule consumes it,
+  and it is not reachability evidence. (Revision 2026-11-10; drafted by a
+  Claude agent. It used to feed a peer surface-state prior, removed together
+  with surface-state hints: whether a link may transmit is the application's
+  decision, and whether a peer is reachable comes only from hearing history.)
 - `collision_domain` identifies link instances backed by one physical
   opportunity domain. Absence means the link has no declared sibling.
 - `max_transmission_duration` is a positive integer number of milliseconds: the time needed to transmit
