@@ -51,19 +51,21 @@ If the derived address for any version is 0 (broadcast) or already occupied by a
 
 Each address assignment carries a monotonically increasing `address_version` (unsigned 16-bit integer). The version is incremented each time a node or client re-addresses (e.g., after losing a conflict).
 
-Address versioning solves the **stale mapping** problem: when the same UID is observed at two different addresses by different parts of the network, the higher version identifies the current assignment.
+A node holds one claim (one incarnation: address, `address_version` and `claim_origin_timestamp`) at a time, and every receiver holds at most one claim per node UID. When the same node UID is observed under two claims — at two addresses, or at one address under two origins — the claim with the later `claim_origin_timestamp` is the current one, whatever its version or address, because a node only ever re-claims forward (origins are issued monotonically, [Section 11.2](#112-claim-timestamps)). This applies to every record that names a node claim: NC_NODE_ADDRESS_CLAIM, NC_NODE_SUMMARY, NC_NODE_UID_ANSWER, and state-sync node records.
 
-Resolution rules for stale mappings (same UID, different addresses):
+Resolution rules for two claims of the same node UID:
 
-- `new_version > stored_version` → accept the update as current.
-- `new_version < stored_version` → discard as stale.
-- `new_version == stored_version` with different address → tie-break by NodeUID; flag as potential misconfiguration.
+- `new_origin > stored_origin` → accept the update as current (replacing the stored claim, at whatever address).
+- `new_origin < stored_origin` → discard as stale (a delayed copy of a claim the node has left).
+- equal origins → the higher `address_version` is current; with equal versions and the same address the record names the stored claim, and only a newer `claim_renewal_timestamp` updates it; with equal versions and different addresses the record is discarded.
+
+Client claims keep version-first resolution: `new_version > stored_version` → accept; `new_version < stored_version` → discard; equal versions with different addresses → the claim conflict rules below.
 
 ### 11.2 Claim Timestamps
 
 Each address assignment carries two timestamps:
 
-- **`claim_origin_timestamp`** (u32, Unix epoch seconds): Set when an address assignment is created, persisted with the assignment, and immutable until the assignment changes. It MUST be reset to `now()` for a new assignment event (conflict loss, claim lapse, or network switch).
+- **`claim_origin_timestamp`** (u32, Unix epoch seconds): Set when an address assignment is created, persisted with the assignment, and immutable until the assignment changes. It MUST be reset to `now()` for a new assignment event (conflict loss, claim lapse, or network switch). A node MUST NOT issue an origin at or below the last origin it issued for its UID: if `now()` is at or below that origin (the clock stepped back), it issues the last origin + 1. The last issued origin is persisted with the local claim ([Section 11.5](#115-local-persistence)) before any claim carrying it is sent, so the rule holds across restarts. Without it, a node whose clock stepped back would lose to its own earlier claim (same-UID claims resolve by later origin, [Section 11.1](#111-address-derivation-and-versioning)).
 - **`claim_renewal_timestamp`** (u32, Unix epoch seconds): Set to `now()` on initial claim and updated on each claim refresh (NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, or explicit claim broadcast). It is persisted with the assignment.
 
 `claim_origin_timestamp` provides first-come ordering for active claim conflicts. `claim_renewal_timestamp` provides liveness (`active` vs `expired`).
@@ -75,7 +77,8 @@ Address version, origin timestamp, and renewal timestamp each solve a different 
 | Scenario | Resolution Mechanism |
 |---|---|
 | Same address, different UIDs (conflict) | Active/expired status (`claim_renewal_timestamp`), then `claim_origin_timestamp` (earlier wins), then UID tiebreak |
-| Same UID, different addresses (stale mapping) | `address_version` (higher wins) |
+| Same node UID, two claims (stale mapping or re-claim) | `claim_origin_timestamp` (later wins, whatever the address or version), then `address_version` (higher wins) |
+| Same client UID, different addresses (stale mapping) | `address_version` (higher wins) |
 | Is this node still present? (liveness) | `claim_renewal_timestamp` vs `expiration_interval` |
 
 **TDMA slot ordering.** When M4P-managed TDMA is enabled ([Section 11.10](#1110-tdma-slot-allocation)), `claim_origin_timestamp` serves a second role: it provides the primary sort key for TDMA slot assignment. Participants are sorted by `(claim_origin_timestamp, node_address)` ascending; position in the sorted list determines slot index. This reuses the existing address claim timestamp without introducing a new temporal concept. See [Section 11.10.1](#11101-slot-assignment-algorithm) for the full algorithm.
@@ -243,6 +246,8 @@ Address assignments MUST be persisted locally to survive reboots without requiri
 
 - Node: `(NodeUID, node_address, address_version, claim_origin_timestamp, claim_renewal_timestamp)`
 - Per client: `(ClientUID, client_address, address_version, claim_origin_timestamp, claim_renewal_timestamp)`
+
+The persisted node `claim_origin_timestamp` is also the last origin the node issued: every new node claim is persisted before it is sent, and a re-claim on startup (a lapsed restored claim) issues an origin later than the persisted one even when the clock is behind it ([Section 11.2](#112-claim-timestamps)).
 
 On startup, nodes MUST load persisted state for the active network ID. If persisted NodeUID does not match the current node identity, the node claim state MUST be treated as absent. Restored node/client claims then follow the boot-path lifecycle rules in [Section 11.4.3](#1143-restored-claims).
 
@@ -797,6 +802,8 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 +-----------------------------------------------+
 | node_address           (NA width)              |
 +-----------------------------------------------+
+| claim_origin_ts        (u32)                   |
++-----------------------------------------------+
 | node_claim_renewal_ts  (u32)                   |
 +-----------------------------------------------+
 | hosted_client_count    (u8)                    |
@@ -807,17 +814,18 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 +-----------------------------------------------+
 ```
 
-**Payload size:** `6 + C × 5` bytes (8-bit) | `7 + C × 6` bytes (16-bit), where C = `hosted_client_count`.
+**Payload size:** `10 + C × 5` bytes (8-bit) | `11 + C × 6` bytes (16-bit), where C = `hosted_client_count`. With the NC Announce header and the transmission sender address, one renewal is `19 + C × 5` bytes (8-bit) | `22 + C × 6` bytes (16-bit) on the air, so a 40-byte TDMA frame (receipt envelope included) carries 3 clients per renewal in 8-bit mode and 2 in 16-bit mode.
+
+`claim_origin_ts` names the node claim (incarnation) being renewed. It was added in place; a decoder of the earlier layout (`node_address · node_claim_renewal_ts · count · repeat`) rejects every renewal in this layout on length.
 
 **Header/payload consistency.** If the NC Announce header `source` field and payload `node_address` differ, the packet is malformed and MUST be dropped.
 
 **Receiver behavior:**
 - NC_CLAIM_RENEWAL MUST NOT create, alter, or remove UID-to-address bindings, address versions, or origin timestamps. It updates `claim_renewal_ts` only.
-- For the node claim: if `node_address` matches a known mapping, update `claim_renewal_ts` using `stored = max(stored, incoming)`. If unknown, ignore.
-- For each client claim: if `client_address` matches a known mapping **hosted by the same node**, update `claim_renewal_ts` using `stored = max(stored, incoming)`. If the address is unknown or mapped to a different host node, ignore it.
-- A receiver MAY emit NC_NODE_UID_QUERY for an unrecognized `node_address` to learn the full mapping, subject to existing query rate-limiting and duplicate-suppression rules ([Section 11.7.8](#1178-nc_node_uid_query-32013)).
+- A renewal applies only to the claim it names. If the receiver holds a mapping with a known UID at `node_address` and `claim_origin_ts` equals the held claim's origin, it updates the node's `claim_renewal_ts` using `stored = max(stored, incoming)`, and for each client claim whose `client_address` matches a known mapping **hosted by the same node** it updates that client's `claim_renewal_ts` the same way (an unknown client address, or one mapped to a different host node, is ignored).
+- Otherwise the renewal refreshes nothing — not the node, not its clients. If it names a later origin than the held claim, or the receiver holds no mapping with a known UID at `node_address`, the receiver has missed a re-claim and emits NC_NODE_UID_QUERY for `node_address`, subject to existing query rate-limiting and duplicate-suppression rules ([Section 11.7.8](#1178-nc_node_uid_query-32013)). A renewal naming an earlier origin is a delayed copy of a claim the node has left and is dropped.
 
-**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement. Clients are sorted by address before splitting.
+**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address`, `claim_origin_ts` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement. Clients are sorted by address before splitting.
 
 **Relaying.** Renewals are forwarded across mesh links as well as infrastructure links, so a node hidden from a peer keeps that peer's lease fresh through a neighbor (PSFI-2358). Ordinary knowledge-based forwarding applies: a renewal is not relayed onto a link whose peers already hold it, so when every node hears every other, no renewal is relayed. In addition:
 - A node retains only the newest renewal of each chunk of each node. A chunk is identified by the source node and the first client address it carries (a renewal without clients has no client key), so later chunks do not supersede earlier ones. A copy whose `node_claim_renewal_ts` is not newer than the retained one never replaces it.
