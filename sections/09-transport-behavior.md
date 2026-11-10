@@ -567,6 +567,12 @@ retain residual uncertainty. Only confirmed evidence should terminate directed R
 carriage. A broadcast record remains bounded by its TTL and the admission floor rather than by
 soft estimated coverage.
 
+Useful reachability evidence includes how recently and how well the peer was last heard on that
+DataLink and per-peer delivery outcomes: a delivery report that names or omits the peer, and on an
+M4P-managed TDMA link each receipt bit the peer reports about one of this node's own Transmissions
+([Section 11.10.8](#11108-tdma-receipt-evidence)). (Revision 2026-11-10; drafted by a Claude
+agent.)
+
 For a candidate record `m`, a useful conceptual novelty estimate is:
 
 ```text
