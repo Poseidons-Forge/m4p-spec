@@ -303,8 +303,7 @@ so a holder no fresher than the asker forwards the query instead of swallowing i
 
 **Scheduling priority.** NC messages use their catalog priority in the same score-density model as
 application records. NC does not receive a separate class multiplier. The deliberate catalog
-values below place claims above routine data, while demand state at priority 120 competes below
-claims and above lower-priority routine records when novelty and wire size are otherwise equal.
+values below place claims above routine data.
 
 Conflict-related catalog entries in this section define trigger surfaces and message contents. Deterministic winner/loser rules, convergence, and declaration suppression are defined canonically in [Section 11.8](#118-conflict-detection-and-resolution).
 
@@ -337,7 +336,12 @@ catalog values keep protocol NC above routine data while bounding retained state
 | 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | Everywhere | 255 | 3,600 s | Stop using a wrong address |
 | 32,030 | NC_TDMA_JOIN | Announce | Infrastructure only | 200 | 3,600 s | TDMA participant discovery |
 | 32,031 | NC_TDMA_SCHEDULE | Announce | Infrastructure only | 200 | 3,600 s | TDMA schedule convergence |
-| 32,040 | [NC_DEMAND_STATE](#1111-demand-state-record) | Announce | Everywhere | 120 | 120 s | Compact outstanding demand and cures |
+
+Type `32,040` was `NC_DEMAND_STATE`, retired in revision 2026-11-10 (drafted by a Claude agent). A
+receiver treats it like any NC type it does not recognize: it retains the packet as an undecoded
+NC Announce instance under its generic default priority and TTL (priority `50` and `60` seconds
+in the stock core configuration), applies no NC scope restriction and no bootstrap exemption, and
+carries it by the ordinary novelty and spacing path until it expires.
 
 #### 11.7.1 NC_NODE_SUMMARY (32,000)
 

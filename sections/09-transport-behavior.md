@@ -209,8 +209,8 @@ the following minimum spacing values:
 
 The capped interval repeats; reaching the cap does not itself remove the record. TTL, one-hop
 rules, terminal confirmed knowledge for directed traffic, and supersession remain the terminal
-conditions. A newly observed peer, peer-restart evidence, or demand evidence that clears stale
-knowledge resets spacing for the affected audience so newly useful traffic can compete promptly.
+conditions. A newly observed peer or peer-restart evidence resets spacing for the affected
+audience so newly useful traffic can compete promptly.
 
 Spacing is a floor, not a target cadence. Once the floor opens, the record still competes for
 packing by effective priority, estimated novel utility, and wire size. Tick-driven opportunities
@@ -234,11 +234,22 @@ one Response per `(request_MIID, message_type_id, source_CA)` from a local clien
 submission MUST be rejected and MUST NOT be encrypted or transmitted; the retained Response, not
 the client, remains the forwarding candidate when a Request is heard again.
 
-A Request becomes terminal when every destination CA has a matching Response or satisfied-demand
-entry. A Response becomes terminal when confirmed evidence shows that the requester's host holds
-it. Until those conditions or TTL expiry, both classes remain ordinary novelty-governed candidates.
-Demand wanting and satisfied evidence can reopen or terminate those gradients as specified in
-[Section 11.11](#1111-demand-state-record).
+A Request becomes terminal when every destination CA has a matching Response. A Response becomes
+terminal when confirmed evidence shows that the requester's host holds it. Until those conditions
+or TTL expiry, both classes remain ordinary novelty-governed candidates.
+
+A Request is always sent as itself, under novelty and the spacing ladder, on every link its
+modality mask allows; no other record stands in for it. The originator's own re-send of the
+Request is its only "still waiting" signal: a node that holds a Response to the Request and hears
+the originator's host send the Request again SHOULD clear its belief that the originator's host
+holds that Response, so the Response competes again. A per-peer receipt or a link's delivery
+confirmation is the "got it": a holder stops carrying a record on a link once every peer in its
+audience there is confirmed.
+
+(Revision 2026-11-10; drafted by a Claude agent.) This replaces the demand-state record, formerly
+Section 11.11. On 2026-11-03 a console held back 28 of 32 acoustic requests because a demand record
+was sent in place of any request another node was confirmed to hold; the mechanism was judged not
+worth its rules and was deleted.
 
 #### 9.3.3 Status Coalescing
 
@@ -547,8 +558,7 @@ answer that question with two separate local beliefs:
    to reach that peer now.
 
 These beliefs are implementation guidance, not interoperable state. They MUST NOT be transmitted
-as another node's beliefs. The demand-state record in [Section 11.11](#1111-demand-state-record) is
-different: it is a normative statement by one requester host about its own outstanding demand.
+as another node's beliefs.
 
 Useful holding evidence includes receiving a whole record from a peer, receiving a duplicate from
 that peer, confirmed per-peer delivery feedback, and the sender's own successful transmissions
