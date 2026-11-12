@@ -51,19 +51,21 @@ If the derived address for any version is 0 (broadcast) or already occupied by a
 
 Each address assignment carries a monotonically increasing `address_version` (unsigned 16-bit integer). The version is incremented each time a node or client re-addresses (e.g., after losing a conflict).
 
-Address versioning solves the **stale mapping** problem: when the same UID is observed at two different addresses by different parts of the network, the higher version identifies the current assignment.
+A node holds one claim (one incarnation: address, `address_version` and `claim_origin_timestamp`) at a time, and every receiver holds at most one claim per node UID. When the same node UID is observed under two claims — at two addresses, or at one address under two origins — the claim with the later `claim_origin_timestamp` is the current one, whatever its version or address, because a node only ever re-claims forward (origins are issued monotonically, [Section 11.2](#112-claim-timestamps)). This applies to every record that names a node claim: NC_NODE_ADDRESS_CLAIM, NC_NODE_SUMMARY, NC_NODE_UID_ANSWER, and state-sync node records.
 
-Resolution rules for stale mappings (same UID, different addresses):
+Resolution rules for two claims of the same node UID:
 
-- `new_version > stored_version` → accept the update as current.
-- `new_version < stored_version` → discard as stale.
-- `new_version == stored_version` with different address → tie-break by NodeUID; flag as potential misconfiguration.
+- `new_origin > stored_origin` → accept the update as current (replacing the stored claim, at whatever address).
+- `new_origin < stored_origin` → discard as stale (a delayed copy of a claim the node has left).
+- equal origins → the higher `address_version` is current; with equal versions and the same address the record names the stored claim, and only a newer `claim_renewal_timestamp` updates it; with equal versions and different addresses the record is discarded.
+
+Client claims keep version-first resolution: `new_version > stored_version` → accept; `new_version < stored_version` → discard; equal versions with different addresses → the claim conflict rules below.
 
 ### 11.2 Claim Timestamps
 
 Each address assignment carries two timestamps:
 
-- **`claim_origin_timestamp`** (u32, Unix epoch seconds): Set when an address assignment is created, persisted with the assignment, and immutable until the assignment changes. It MUST be reset to `now()` for a new assignment event (conflict loss, claim lapse, or network switch).
+- **`claim_origin_timestamp`** (u32, Unix epoch seconds): Set when an address assignment is created, persisted with the assignment, and immutable until the assignment changes. It MUST be reset to `now()` for a new assignment event (conflict loss, claim lapse, or network switch). A node MUST NOT issue an origin at or below the last origin it issued for its UID: if `now()` is at or below that origin (the clock stepped back), it issues the last origin + 1. The last issued origin is persisted with the local claim ([Section 11.5](#115-local-persistence)) before any claim carrying it is sent, so the rule holds across restarts. Without it, a node whose clock stepped back would lose to its own earlier claim (same-UID claims resolve by later origin, [Section 11.1](#111-address-derivation-and-versioning)).
 - **`claim_renewal_timestamp`** (u32, Unix epoch seconds): Set to `now()` on initial claim and updated on each claim refresh (NC_NODE_SUMMARY, NC_CLAIM_RENEWAL, or explicit claim broadcast). It is persisted with the assignment.
 
 `claim_origin_timestamp` provides first-come ordering for active claim conflicts. `claim_renewal_timestamp` provides liveness (`active` vs `expired`).
@@ -75,10 +77,11 @@ Address version, origin timestamp, and renewal timestamp each solve a different 
 | Scenario | Resolution Mechanism |
 |---|---|
 | Same address, different UIDs (conflict) | Active/expired status (`claim_renewal_timestamp`), then `claim_origin_timestamp` (earlier wins), then UID tiebreak |
-| Same UID, different addresses (stale mapping) | `address_version` (higher wins) |
+| Same node UID, two claims (stale mapping or re-claim) | `claim_origin_timestamp` (later wins, whatever the address or version), then `address_version` (higher wins) |
+| Same client UID, different addresses (stale mapping) | `address_version` (higher wins) |
 | Is this node still present? (liveness) | `claim_renewal_timestamp` vs `expiration_interval` |
 
-**TDMA slot ordering.** When M4P-managed TDMA is enabled ([Section 11.10](#1110-tdma-slot-allocation)), `claim_origin_timestamp` serves a second role: it provides the primary sort key for TDMA slot assignment. Participants are sorted by `(claim_origin_timestamp, node_address)` ascending; position in the sorted list determines slot index. This reuses the existing address claim timestamp without introducing a new temporal concept. See [Section 11.10.1](#11101-slot-assignment-algorithm) for the full algorithm.
+**TDMA slot ordering.** TDMA slot order does not use claim timestamps: participants are sorted by ascending `node_address` ([Section 11.7.18.1](#117181-slot-assignment-algorithm)). Claim timestamps decide only which claims a node holds and whether a participant's lease is active.
 
 Lifecycle rules that update these fields are defined in [Section 11.1](#111-address-derivation-and-versioning), [Section 11.3](#113-claim-expiration-and-renewal), [Section 11.4](#114-claim-lifecycle), and [Section 11.5](#115-local-persistence).
 
@@ -128,7 +131,7 @@ A node broadcasts NC_NODE_SUMMARY or NC_CLAIM_RENEWAL every `renewal_interval`, 
 - **Expiration interval scaling.** For large fleets on severely constrained links, use longer `expiration_interval` values to reduce summary frequency.
 - **Constrained-link fallback.** On modalities where the full NC_NODE_SUMMARY exceeds the payload budget, nodes SHOULD send NC_CLAIM_RENEWAL instead ([Section 11.7.14](#11714-nc_claim_renewal-32004)).
 
-**Sizing reference:** Per-node summary payload is approximately `(14 + L_node + C × (12 + L_client) + T × (1 + L_modality))` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths, `C` is hosted client count, `T` is TDMA modality count, and `L_modality` is average modality name length. For nodes with no M4P-managed TDMA participation, the overhead is 1 byte (`tdma_modality_count = 0`).
+**Sizing reference:** Per-node summary payload is approximately `(14 + L_node + C × (12 + L_client) + T × (2 + L_modality))` bytes in 8-bit mode (`+1` byte per address field in 16-bit mode), where `L_node` and `L_client` are UID lengths, `C` is hosted client count, `T` is TDMA modality count, and `L_modality` is average modality name length. For nodes with no M4P-managed TDMA participation, the overhead is 1 byte (`tdma_modality_count = 0`).
 
 #### 11.3.3 Lapsed Claim Detection
 
@@ -138,11 +141,13 @@ A node can detect that its own claim has lapsed by checking:
 now - last_broadcast_renewal_timestamp >= expiration_interval
 ```
 
-This occurs when a node has been unable to broadcast for longer than the expiration interval. When a node detects that its own claim has lapsed, it MUST treat the next broadcast as a **new claim**:
+This occurs when a node has been unable to broadcast for longer than the expiration interval. When a node detects that its own claim has lapsed, it MUST treat the next broadcast as a **new claim**, and MUST NOT renew the lapsed claim:
 
-- Set `claim_origin_timestamp = now()` (the node is now a new claimant, not the original holder).
+- Set `claim_origin_timestamp = now()` (the node is now a new claimant, not the original holder), or the last origin it issued + 1 when the clock is at or behind it ([Section 11.2](#112-claim-timestamps)).
 - Set `claim_renewal_timestamp = now()`.
 - Retain the existing `address` and `address_version` (attempt reclaim of the prior address).
+
+Peers see a later origin for the same node UID and replace the lapsed claim ([Section 11.1](#111-address-derivation-and-versioning)). A node that keeps its address keeps its TDMA slot order, which follows the address ([Section 11.10.1](#11101-slot-assignment-algorithm)).
 
 If the address was taken during the lapse, normal conflict rules make the returning node lose (later `claim_origin_timestamp`) and re-address, preventing displacement of an established holder.
 
@@ -199,7 +204,7 @@ flowchart TD
 
 **Claim states.** Each address assignment (node or client) is in one of three states: **UNASSIGNED** (no address derived; node cannot participate), **PENDING** (claim broadcast but not yet confirmed; node MAY send/receive NC traffic but MUST NOT send application data), and **CONFIRMED** (claim confirmed; node MAY send application data).
 
-**TDMA prerequisite.** A node MUST NOT generate NC_TDMA_JOIN ([Section 11.7.17](#11717-nc_tdma_join-32030)) or compute a TDMA schedule until its node address claim is in the CONFIRMED state. The TDMA slot assignment algorithm ([Section 11.10.1](#11101-slot-assignment-algorithm)) depends on a stable `claim_origin_timestamp` and `node_address`, both of which may change during the PENDING state if a conflict is detected.
+**TDMA prerequisite.** A node MUST NOT generate NC_TDMA_JOIN ([Section 11.7.17](#11717-nc_tdma_join-32030)) or compute a TDMA schedule until its node address claim is in the CONFIRMED state. The TDMA slot assignment algorithm ([Section 11.10.1](#11101-slot-assignment-algorithm)) depends on a stable `node_address`, which may change during the PENDING state if a conflict is detected.
 
 #### 11.4.1 Confirmation Paths
 
@@ -243,6 +248,8 @@ Address assignments MUST be persisted locally to survive reboots without requiri
 
 - Node: `(NodeUID, node_address, address_version, claim_origin_timestamp, claim_renewal_timestamp)`
 - Per client: `(ClientUID, client_address, address_version, claim_origin_timestamp, claim_renewal_timestamp)`
+
+The persisted node `claim_origin_timestamp` is also the last origin the node issued: every new node claim is persisted before it is sent, and a re-claim on startup (a lapsed restored claim) issues an origin later than the persisted one even when the clock is behind it ([Section 11.2](#112-claim-timestamps)).
 
 On startup, nodes MUST load persisted state for the active network ID. If persisted NodeUID does not match the current node identity, the node claim state MUST be treated as absent. Restored node/client claims then follow the boot-path lifecycle rules in [Section 11.4.3](#1143-restored-claims).
 
@@ -375,10 +382,6 @@ catalog values keep protocol NC above routine data while bounding retained state
 |   client_claim_renewal_ts (u32)                |
 |   client_uid_len       (u8)                    |
 |   client_uid           (client_uid_len B)      |
-| tdma_modality_count    (u8)                    |
-| repeat tdma_modality_count times:              |
-|   tdma_modality_len    (u8)                    |
-|   tdma_modality_name   (tdma_modality_len B)   |
 +-----------------------------------------------+
 | tdma_modality_count    (u8)                    |
 +-----------------------------------------------+
@@ -386,15 +389,23 @@ catalog values keep protocol NC above routine data while bounding retained state
 |   modality_name_len    (u8)                    |
 |   modality_name        (modality_name_len B)   |
 +-----------------------------------------------+
+| repeat tdma_modality_count times:              |
+|   schedule_hash        (u8, high bit 0)        |
++-----------------------------------------------+
 ```
 
-**Payload size:** `14 + N + C × (12 + Cᵢ) + T × (1 + Mⱼ)` bytes (8-bit) | `15 + N + C × (13 + Cᵢ) + T × (1 + Mⱼ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client, T = `tdma_modality_count`, and Mⱼ = `modality_name_len` for each TDMA modality.
+**Payload size:** `14 + N + C × (12 + Cᵢ) + T × (2 + Mⱼ)` bytes (8-bit) | `15 + N + C × (13 + Cᵢ) + T × (2 + Mⱼ)` bytes (16-bit), where N = `origin_node_uid_len`, C = `hosted_client_count`, Cᵢ = `client_uid_len` for each client, T = `tdma_modality_count`, and Mⱼ = `modality_name_len` for each TDMA modality.
 
 The `tdma_modality_count` field lists the modalities for which this node participates in M4P-managed TDMA ([Section 11.10](#1110-tdma-slot-allocation)). A value of `0` indicates no M4P-managed TDMA participation. The modality list reflects all registered M4P-managed TDMA links, not just currently-connected ones — a link that is temporarily disconnected does not cause the node to stop advertising that modality. This field provides steady-state reinforcement of TDMA modality participation through periodic NC_NODE_SUMMARY rebroadcast; event-driven announcement uses NC_TDMA_JOIN ([Section 11.7.17](#11717-nc_tdma_join-32030)).
 
+The `schedule_hash` fields follow all the modality names, one per name in the same order. Each is the sender's seven-bit whole-schedule hash ([Section 11.10.8](#11108-tdma-receipt-evidence)) for that modality, computed over the ordered participants and cycle geometry it holds when it builds the summary. They let two nodes see that their schedules differ over any link, before either transmits on the modality ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)). A sender MUST NOT encode a hash above `0x7f`.
+
 **Receiver behavior:**
 - Apply shared mapping-update handling and update node/client mapping state.
-- After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience.
+- After parsing hosted clients, parse the TDMA modality tail. If the payload ends before `tdma_modality_count`, treat it as `0` modalities for decode resilience. Otherwise read the count, the names, then one `schedule_hash` per name; a payload that ends before every hash is read, or a hash above `0x7f`, is malformed.
+- Apply the TDMA membership and schedule-hash rules in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
+
+**Rationale (normative).** The hashes follow the names, rather than each hash following its name, so that a decoder built for the layout without hashes rejects the new payload instead of misreading it: it reads the count and every name exactly as before and then finds `tdma_modality_count` trailing bytes. Interleaved, such a decoder could read a hash as the next name's length and accept the payload with its modalities misread. With no modality the payload is byte-identical to the layout without hashes.
 
 #### 11.7.2 NC_NETWORK_STATE_REQUEST (32,001)
 
@@ -797,6 +808,8 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 +-----------------------------------------------+
 | node_address           (NA width)              |
 +-----------------------------------------------+
+| claim_origin_ts        (u32)                   |
++-----------------------------------------------+
 | node_claim_renewal_ts  (u32)                   |
 +-----------------------------------------------+
 | hosted_client_count    (u8)                    |
@@ -807,17 +820,18 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 +-----------------------------------------------+
 ```
 
-**Payload size:** `6 + C × 5` bytes (8-bit) | `7 + C × 6` bytes (16-bit), where C = `hosted_client_count`.
+**Payload size:** `10 + C × 5` bytes (8-bit) | `11 + C × 6` bytes (16-bit), where C = `hosted_client_count`. With the NC Announce header and the transmission sender address, one renewal is `19 + C × 5` bytes (8-bit) | `22 + C × 6` bytes (16-bit) on the air, so a 40-byte TDMA frame (receipt envelope included) carries 3 clients per renewal in 8-bit mode and 2 in 16-bit mode.
+
+`claim_origin_ts` names the node claim (incarnation) being renewed. It was added in place; a decoder of the earlier layout (`node_address · node_claim_renewal_ts · count · repeat`) rejects every renewal in this layout on length.
 
 **Header/payload consistency.** If the NC Announce header `source` field and payload `node_address` differ, the packet is malformed and MUST be dropped.
 
 **Receiver behavior:**
 - NC_CLAIM_RENEWAL MUST NOT create, alter, or remove UID-to-address bindings, address versions, or origin timestamps. It updates `claim_renewal_ts` only.
-- For the node claim: if `node_address` matches a known mapping, update `claim_renewal_ts` using `stored = max(stored, incoming)`. If unknown, ignore.
-- For each client claim: if `client_address` matches a known mapping **hosted by the same node**, update `claim_renewal_ts` using `stored = max(stored, incoming)`. If the address is unknown or mapped to a different host node, ignore it.
-- A receiver MAY emit NC_NODE_UID_QUERY for an unrecognized `node_address` to learn the full mapping, subject to existing query rate-limiting and duplicate-suppression rules ([Section 11.7.8](#1178-nc_node_uid_query-32013)).
+- A renewal applies only to the claim it names. If the receiver holds a mapping with a known UID at `node_address` and `claim_origin_ts` equals the held claim's origin, it updates the node's `claim_renewal_ts` using `stored = max(stored, incoming)`, and for each client claim whose `client_address` matches a known mapping **hosted by the same node** it updates that client's `claim_renewal_ts` the same way (an unknown client address, or one mapped to a different host node, is ignored).
+- Otherwise the renewal refreshes nothing — not the node, not its clients. If it names a later origin than the held claim, or the receiver holds no mapping with a known UID at `node_address`, the receiver has missed a re-claim and emits NC_NODE_UID_QUERY for `node_address`, subject to existing query rate-limiting and duplicate-suppression rules ([Section 11.7.8](#1178-nc_node_uid_query-32013)). A renewal naming an earlier origin is a delayed copy of a claim the node has left and is dropped.
 
-**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement. Clients are sorted by address before splitting.
+**Large client sets.** When the hosted client count exceeds what fits in a single packet, the sender MUST split clients across multiple NC_CLAIM_RENEWAL packets. All packets carry the same `node_address`, `claim_origin_ts` and `node_claim_renewal_ts`. Receivers accumulate client renewals across packets — there is no complete-set requirement. Clients are sorted by address before splitting.
 
 **Relaying.** Renewals are forwarded across mesh links as well as infrastructure links, so a node hidden from a peer keeps that peer's lease fresh through a neighbor (PSFI-2358). Ordinary knowledge-based forwarding applies: a renewal is not relayed onto a link whose peers already hold it, so when every node hears every other, no renewal is relayed. In addition:
 - A node retains only the newest renewal of each chunk of each node. A chunk is identified by the source node and the first client address it carries (a renewal without clients has no client key), so later chunks do not supersede earlier ones. A copy whose `node_claim_renewal_ts` is not newer than the retained one never replaces it.
@@ -893,12 +907,12 @@ Defined in [Section 8.5](#85-fragment-nacks-network-control-type-32003). Include
 
 The `modality_name` is a UTF-8 string identifying the modality whose TDMA schedule the node is joining (e.g., `"acoustic"`). The `node_address` field is the joining node's NA (redundant with the NC Announce header `source` field, included for payload self-containment consistent with other NC message types).
 
-No per-modality timestamp is carried. TDMA slot ordering uses the node's `claim_origin_timestamp` from the address claim protocol ([Section 11.2](#112-claim-timestamps)), which peers already know from NC_NODE_ADDRESS_CLAIM and NC_NODE_SUMMARY.
+No per-modality timestamp is carried: slot order follows the address ([Section 11.7.18.1](#117181-slot-assignment-algorithm)), which the join carries.
 
 **Receiver behavior:**
 - Validate `node_address != 0` and that `modality_name` is valid UTF-8.
-- Add the sender to the local participant set for the named modality.
-- If the sender's `claim_origin_timestamp` is not yet known, defer schedule computation until the timestamp is learned. The node SHOULD emit NC_NODE_UID_QUERY for the unknown address if one is not already outstanding.
+- If the receiver judges the sender's claim lease active ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation), participant expiry), add the sender to the local participant set for the named modality.
+- If the receiver holds no claim for the sender's address, it cannot judge the lease: it keeps the join and applies it once a claim-bearing record (claim, summary, UID answer) makes the lease active. The node SHOULD emit NC_NODE_UID_QUERY for the unknown address if one is not already outstanding. A join from a sender whose lease the receiver judges lapsed is ignored.
 - The participant with the lowest slot index in the updated participant list (excluding the joining node) is the **designated responder**. The joining node is excluded because it may not yet have the full participant list. The designated responder MUST generate NC_TDMA_SCHEDULE ([Section 11.7.18](#11718-nc_tdma_schedule-32031)) immediately.
 - Other participants SHOULD defer NC_TDMA_SCHEDULE generation for a suppression window (default: 2× cycle duration) and cancel if an NC_TDMA_SCHEDULE reflecting the change is received before the window expires. "Reflecting the change" means the received participant list includes (for joins) or omits (for departures) the triggering node. If the suppression window expires without a matching schedule, the node SHOULD generate NC_TDMA_SCHEDULE with short random jitter.
 
@@ -912,7 +926,7 @@ NC_TDMA_JOIN establishes participant membership intent. Participant-list reconci
 
 **When sent:**
 - On TDMA membership changes — join via NC_TDMA_JOIN, or departure via claim expiration ([Section 11.3](#113-claim-expiration-and-renewal)) — subject to designated-responder storm prevention ([Section 11.7.17](#11717-nc_tdma_join-32030) receiver behavior).
-- For reconciliation when a node detects schedule divergence via sender-slot mismatch or receives an NC_TDMA_SCHEDULE missing participants it knows to be active ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)). Reconciliation broadcasts use short random jitter only, not the designated-responder suppression window, because delayed convergence is costlier than a few redundant schedule messages.
+- For reconciliation when a node detects schedule divergence via sender-slot mismatch or whole-schedule hash mismatch, or receives an NC_TDMA_SCHEDULE missing participants it knows to be active ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)). Reconciliation broadcasts use short random jitter only, not the designated-responder suppression window, because delayed convergence is costlier than a few redundant schedule messages. Broadcasts triggered by a whole-schedule hash mismatch are additionally spaced by the back-off in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
 
 **Payload:**
 
@@ -930,7 +944,7 @@ NC_TDMA_JOIN establishes participant membership intent. Participant-list reconci
 
 **Payload size:** `2 + M + P × A` bytes, where M = `modality_name_len`, P = `participant_count`, and A = NA width (1 for 8-bit, 2 for 16-bit). For 10 participants with an 8-byte modality name: `2 + 8 + 10 × 1 = 20` bytes (8-bit) or `2 + 8 + 10 × 2 = 30` bytes (16-bit).
 
-The participant entries carry only addresses. The sort key for slot ordering is `(claim_origin_timestamp, node_address)`, and every peer's `claim_origin_timestamp` is already known from the address claim protocol and NC_NODE_SUMMARY. This keeps NC_TDMA_SCHEDULE compact — important for constrained channels where every byte matters. No explicit slot assignment field is needed — the ordering rule IS the assignment. See [Section 11.7.18.1](#117181-slot-assignment-algorithm) for the normative algorithm.
+The participant entries carry only addresses, and the address is the sort key for slot ordering, so every receiver can place every listed participant without learning anything first. This keeps NC_TDMA_SCHEDULE compact — important for constrained channels where every byte matters. No explicit slot assignment field is needed — the ordering rule IS the assignment. See [Section 11.7.18.1](#117181-slot-assignment-algorithm) for the normative algorithm.
 
 The payload represents the sender's current view of participants for one modality. Receivers MUST apply the merge/defer rules below so that incomplete sender views do not regress local schedule state.
 
@@ -939,7 +953,7 @@ The payload represents the sender's current view of participants for one modalit
 - Build a merged participant list from:
   1) participant addresses carried in the received payload, and
   2) locally known active participants for that modality not present in the received payload.
-- Participants present in the received payload but lacking locally known claim-origin data MUST be deferred until the mapping is learned.
+- Participants present in the received payload whose claim lease the receiver judges lapsed MUST NOT be added. Participants for whose address the receiver holds no claim (so it cannot judge the lease) MUST be deferred until a claim-bearing record makes the lease active; the receiver SHOULD emit NC_NODE_UID_QUERY for them.
 - Update local TDMA state from the merged list (not by replacing with the received list).
 - If the received list is missing one or more locally known active participants, the receiver MUST schedule a reconciliation NC_TDMA_SCHEDULE with short random jitter.
 - Slot-index computation for the merged participant list MUST follow [Section 11.7.18.1](#117181-slot-assignment-algorithm).
@@ -947,7 +961,7 @@ The payload represents the sender's current view of participants for one modalit
 
 How a node converts converged schedule state into transmission opportunities is defined by the DataLink MAC-management mode in [Section 10.4](#104-data-link-adaptation).
 
-**Edge case — unknown participant.** If a node receives NC_TDMA_SCHEDULE listing an address whose `claim_origin_timestamp` it has not yet learned, it cannot sort that participant. The node SHOULD treat this as a discovery event: it knows the participant exists and can compute the correct schedule once it receives that peer's NC_NODE_SUMMARY or NC_NODE_ADDRESS_CLAIM. In practice this is rare — the address claim protocol runs before TDMA joining, so peers typically learn timestamps before seeing the TDMA schedule.
+**Edge case — unknown participant.** If a node receives NC_TDMA_SCHEDULE listing an address it holds no claim for, it can place the participant (the address is the sort key) but cannot judge its lease. The node SHOULD treat this as a discovery event and query the address; it adds the participant once that peer's claim arrives with an active lease. In practice this is rare — the address claim protocol runs before TDMA joining.
 
 **NC no-fragmentation constraint.** NC_TDMA_SCHEDULE is subject to the NC no-fragmentation rule ([Section 5.5](#55-network-control-packet-headers)). Deployments with more TDMA participants than fit in a single NC packet on the available modalities SHOULD use a higher-throughput modality for TDMA coordination (e.g., radio or LAN) with the constrained modality's TDMA contention window set to 0.
 
@@ -955,9 +969,11 @@ How a node converts converged schedule state into transmission opportunities is 
 
 #### 11.7.18.1 Slot Assignment Algorithm
 
-The slot-assignment algorithm for M4P-managed TDMA is normative and deterministic. Given the active participant set for a modality (after merge/defer rules in [Section 11.7.18](#11718-nc_tdma_schedule-32031)), nodes MUST sort participants by ascending `(claim_origin_timestamp, node_address)`.
+The slot-assignment algorithm for M4P-managed TDMA is normative and deterministic. Given the active participant set for a modality (after merge/defer rules in [Section 11.7.18](#11718-nc_tdma_schedule-32031)), nodes MUST sort participants by ascending `node_address`.
 
-The sorted position determines slot index: `slot_index = position` (0-based). `num_participants` equals the number of sorted participants. Nodes with unknown `claim_origin_timestamp` are not assigned a slot until claim-origin data is known.
+The sorted position determines slot index: `slot_index = position` (0-based). `num_participants` equals the number of sorted participants. A participant is assigned a slot once the node admits it (its claim lease is active, [Section 11.7.18](#11718-nc_tdma_schedule-32031)); no claim fact is needed to place it.
+
+**Rationale (normative).** The address is carried in every frame and needs nothing learned first, so two nodes with the same participant set always compute the same order. Ordering by claim time made the schedule depend on claim facts that two nodes could hold differently (a peer that re-claimed, a delayed record), and bought no on-air stability: with slot owner = slot position modulo participant count ([Section 11.10.1](#11101-slot-assignment-algorithm)), a join or departure changes the owner of most slot positions under any ordering.
 
 Cycle geometry uses the configured timing parameters: cycle duration `Y = contention_cadence`, contention window `X = contention_window`, slot duration `S = slot_duration`, and `slots_per_cycle = floor((Y - X) / S)`. For participant index `i`, transmission opportunities are the round-robin sequence `g = i + k × num_participants` (for `k = 0, 1, 2, …`), with:
 
@@ -1294,9 +1310,9 @@ The DataLink interface ([Section 10.1](#101-datalink-interface)) is unchanged. T
 
 The normative slot-assignment algorithm is defined in [Section 11.7.18.1](#117181-slot-assignment-algorithm). This section provides additional behavioral guidance.
 
-Because `claim_origin_timestamp` is immutable once set, and `node_address` is unique, the sort order is stable: a new node joining the network sorts after all existing participants, and existing participants' slot indices do not change. No pre-configured slot count is required; the participant list grows dynamically.
+Because `node_address` is unique, the sort order is a function of the participant set alone: nodes that learned of each other in different orders compute the same order. A joining node takes the position its address sorts into, so existing participants after it move up one index; because slot owner = slot position modulo participant count, a change in the participant count moves the owner of most slot positions in any case, whatever the order. No pre-configured slot count is required; the participant list grows dynamically.
 
-**Simultaneous boot (equal claim times).** When two nodes claim addresses at the same second, they may have identical `claim_origin_timestamp` values. The `node_address` tiebreak ensures deterministic ordering once both nodes know about each other. During the pre-discovery window, each node computes a schedule using only itself as participant (slot 0) — this overlap resolves through the normal join sequence ([Section 11.10.5](#11105-node-join-sequence)) and, if needed, the sender-slot mismatch reconciliation mechanism ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
+**Simultaneous boot.** During the pre-discovery window, each node computes a schedule using only itself as participant (slot 0) — this overlap resolves through the normal join sequence ([Section 11.10.5](#11105-node-join-sequence)) and, if needed, the sender-slot mismatch reconciliation mechanism ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
 
 **First slot computation.** When a node has a CONFIRMED address and no prior TDMA schedule for a modality, it SHOULD compute its slot immediately using only itself as the sole participant (slot 0). The schedule will update when peers are discovered.
 
@@ -1305,9 +1321,9 @@ Because `claim_origin_timestamp` is immutable once set, and `node_address` is un
 TDMA slot allocation requires knowing which nodes participate in which modalities. Nodes advertise their TDMA modality participation through two mechanisms:
 
 - **NC_TDMA_JOIN** ([Section 11.7.17](#11717-nc_tdma_join-32030)): Event-driven announcement when a node wants to join a TDMA modality. Fast, targeted.
-- **NC_NODE_SUMMARY** ([Section 11.7.1](#1171-nc_node_summary-32000)): Periodic rebroadcast includes the `tdma_modality_count` / `modality_name` extension. Steady-state reinforcement.
+- **NC_NODE_SUMMARY** ([Section 11.7.1](#1171-nc_node_summary-32000)): Periodic rebroadcast includes the `tdma_modality_count` / `modality_name` / `schedule_hash` extension. Steady-state reinforcement.
 
-Both mechanisms carry the same information: the set of modalities for which the node participates in M4P-managed TDMA. NC_TDMA_JOIN provides the initial announcement; NC_NODE_SUMMARY provides periodic convergence.
+Both mechanisms carry the set of modalities for which the node participates in M4P-managed TDMA. NC_TDMA_JOIN provides the initial announcement; NC_NODE_SUMMARY provides periodic convergence, and its per-modality schedule hash lets peers detect a schedule disagreement ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)).
 
 **Modality name matching.** Modality names are compared as byte-exact UTF-8 strings. Implementations MUST NOT apply case folding or normalization. Deployments MUST use identical modality name strings across all nodes participating in the same TDMA schedule. A mismatch (e.g., `"acoustic"` vs `"Acoustic"`) will cause nodes to compute independent schedules for what they treat as different modalities.
 
@@ -1382,7 +1398,7 @@ The following sequence is the same regardless of which modalities are available.
 2. **Address confirmed.** Node receives NC_ADDRESS_CLAIM_ACK (may arrive over any modality). Claim transitions to CONFIRMED.
 3. **Node broadcasts NC_TDMA_JOIN** for each M4P-managed TDMA modality it participates in on all available links. Simultaneously, the node computes a preliminary schedule from its own address (taking slot 0 as sole participant) and pushes it to the link.
 4. **Existing peer(s) receive NC_TDMA_JOIN** (over any modality). They add the new node to the participant list, recompute the schedule, and the designated responder (lowest slot index) broadcasts NC_TDMA_SCHEDULE on all available links.
-5. **Node receives NC_TDMA_SCHEDULE** (may arrive over any modality). Extracts the participant list. Sorts by `(claim_origin_timestamp, node_address)`. Finds its slot. Pushes the updated schedule to the link.
+5. **Node receives NC_TDMA_SCHEDULE** (may arrive over any modality). Extracts the participant list. Sorts by `node_address`. Finds its slot. Pushes the updated schedule to the link.
 6. **All other nodes** also receive the NC_TDMA_SCHEDULE broadcast and synchronize on the updated schedule simultaneously.
 
 **Cross-modality delivery.** NC_TDMA_JOIN and NC_TDMA_SCHEDULE are NC messages subject to normal modality-agnostic delivery. A join transmitted over acoustic contention may be acknowledged via NC_TDMA_SCHEDULE arriving over radio.
@@ -1408,7 +1424,7 @@ The schedule evolves continuously as peer knowledge changes. There is no distinc
 
 Nodes may operate with divergent TDMA schedules when schedule-changing events (NC_TDMA_JOIN, claim expiration) are not observed by all participants — for example, when a node is temporarily out of range during a join event. Because the TDMA round-robin pattern depends on the total participant count, even a single missing participant causes slot position misalignment and potential collisions.
 
-Two mechanisms provide schedule convergence:
+The following mechanisms provide schedule convergence:
 
 **Passive convergence (NC_NODE_SUMMARY).** Each node's periodic NC_NODE_SUMMARY includes its TDMA modality participation ([Section 11.7.1](#1171-nc_node_summary-32000)). A node that receives a summary listing a TDMA modality from a peer not in its local participant list SHOULD add that peer and recompute the schedule. This provides eventual convergence bounded by the NC_NODE_SUMMARY broadcast cadence (`renewal_interval`).
 
@@ -1416,19 +1432,48 @@ Two mechanisms provide schedule convergence:
 
 **[BEHAVIORAL]** When a node detects a sender-slot mismatch on a TDMA-managed modality:
 
-1. The node SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list on all available links.
+1. The node SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list on all available links, judged after the Transmission's packets are applied and subject to the back-off below, which a sender-slot mismatch shares with a whole-schedule hash mismatch.
 2. Peers that receive an NC_TDMA_SCHEDULE missing participants they know to be active SHOULD respond with NC_TDMA_SCHEDULE containing their own participant list. Responding peers SHOULD apply a short random jitter before transmitting to reduce the probability of simultaneous responses, but MUST NOT apply the full designated-responder suppression window used for join/departure events ([Section 11.7.18](#11718-nc_tdma_schedule-32031)). Resolving schedule divergence takes priority over minimizing NC traffic — continued slot misalignment causes collisions every cycle, which is more costly than a few redundant reconciliation responses.
 3. The detecting node receives the response, adds any participants whose claims it can verify as active, and recomputes the schedule.
 
-This reconciliation is self-limiting: once the stale node updates its schedule, sender-slot mismatches cease and no further reconciliation responses are triggered. The exchange is idempotent — each node independently validates participants against claim status and the deterministic algorithm ([Section 11.10.1](#11101-slot-assignment-algorithm)) produces the same schedule once both nodes have the same validated participant set.
+**Active detection (whole-schedule hash mismatch).** Every M4P-managed TDMA Transmission carries the sender's whole-schedule hash ([Section 11.10.8](#11108-tdma-receipt-evidence)), including Transmissions in the contention window, which the sender-slot check does not examine. A hash that differs from the local one means the two nodes hold different schedules even when no sender-slot mismatch is observed — in particular when their data slots collide and nothing in them is received.
+
+**[BEHAVIORAL]** A node joined to an M4P-managed TDMA modality judges a received Transmission against its local schedule **after** applying the Transmission's packets. The Transmission disagrees when its envelope hash differs from the local whole-schedule hash, or when it was received in a data slot whose expected owner is not its `node_address_sender`:
+
+1. If it disagrees, the node SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list, with short random jitter and subject to the back-off below. Both kinds of disagreement share one back-off; neither queues a broadcast outside it.
+2. **Back-off.** Per modality, the first hash-triggered broadcast MAY go out at once. Each later one MUST wait at least the current interval after the previous one; the interval starts at one cycle (`contention_cadence`), doubles after each broadcast, and is capped at eight `schedule_suppression_window`s (two cycles each when that setting is zero).
+3. **Reset.** The node tracks, per modality, the peers whose most recent Transmission or judged node summary disagreed. A peer leaves that set when a Transmission from it carries the local hash in a data slot whose expected owner it is, when its judged node summary states the local hash, or when it is no longer a participant. A contention-window Transmission carrying the local hash neither adds nor removes the peer. When the set is empty the back-off resets, and the next disagreement again broadcasts at once.
+4. **Settle.** Within one `schedule_suppression_window` of a change to its own participant list for the modality, a disagreeing Transmission MUST NOT queue a broadcast, advance the back-off or add its sender to the set above. Its mismatch is still counted and reported ([Section 11.10.8](#11108-tdma-receipt-evidence)). The same window applies to node summaries (below).
+5. **Repeat.** A broadcast the back-off allows MUST be sent even when its participant list equals the node's previous NC_TDMA_SCHEDULE for the modality. It is a new message instance (new MIID) that supersedes the previous record, so the previous record's peer-holding evidence is purged ([Section 9.2](#92-per-node-message-store)). An NC_TDMA_SCHEDULE sent for a membership change, or in answer to a received schedule that omits a participant, MAY be dropped when its list equals the previous record's.
+
+**Rationale (normative).** Judging after the packets keeps joins with their designated responder: a join Transmission already carries the joiner's new hash, and judged before the join is applied every receiver would answer it at once. The back-off exists because a disagreeing peer's hash arrives on every frame it sends, unlike the other two triggers. The cap follows from the suppression window, the time one schedule exchange is given to settle: a mismatch that several exchanges did not settle has a cause one more exchange cannot fix (for example a lease one node judges lapsed and another active, which settles on a renewal or a lapse), so retries slow to one per eight windows rather than one per received frame, and repair still follows within eight windows of the cause clearing. The reset waits for every disagreeing peer because with three or more nodes one peer can agree while another still disagrees; resetting on the agreeing peer would answer every disagreeing frame. A different hash and a sender outside its slot share the back-off because they are the same fault seen two ways, and both arrive on every frame the disagreeing peer sends. A contention-window Transmission cannot clear a peer because it shows the hash but not the sender's timing: a peer whose clock is offset by a slot keeps the same hash while every data-slot frame it sends is out of slot, and no schedule exchange repairs a clock, so the back-off holds at its cap. A back-off broadcast repeats an unchanged list because the disagreeing peer may lack a list the sender's evidence counts as held: a receiver that judged a listed participant's lease lapsed takes the list without that participant ([Section 11.7.18](#11718-nc_tdma_schedule-32031)), and if it later finds the lease active nothing else re-adds the participant. Only the back-off's broadcasts repeat, because only they are spaced; repeated answers answer each other while a schedule forms. The settle window keeps the back-off from repeating a list during a change the peer is still taking: a node that has just changed its participant list is ahead of peers that have not heard of the change yet, their Transmissions state the old hash for a while, and the join and schedule messages already carry the change. A disagreement that outlasts the window is acted on as usual.
+
+[GUIDANCE] Earlier revisions only counted a whole-schedule mismatch and emitted an engineering event; reconciliation ran on sender-slot mismatch and on a schedule omitting a known participant. That could leave schedules diverged while every data slot collided, because collided frames produce no sender-slot evidence. A sender-slot mismatch also used to broadcast on every wrong-slot Transmission, without back-off.
+
+[GUIDANCE] Earlier revisions also dropped a back-off broadcast whose list equalled the previous record, so the back-off could not repair a peer that had filtered that list. Two limits remain. The answer to a received schedule that omits a participant has no back-off of its own; only dropping a repeat of the previous list bounds it. A repeat reaches direct neighbours only: a relay that holds the previous record with the same list treats the new instance as a duplicate and does not forward it, although its own schedule handling still runs on it.
+
+**Active detection (node summary hash).** NC_NODE_SUMMARY states the sender's whole-schedule hash for each modality it lists ([Section 11.7.1](#1171-nc_node_summary-32000)). Summaries travel on every link, so two nodes connected only by an infrastructure link can see that their schedules differ before either transmits on the modality.
+
+**[BEHAVIORAL]** On an NC_NODE_SUMMARY whose claim the node accepted or already held and whose sender's lease is active, after applying the summary's TDMA membership (passive convergence above), a node judges each listed modality it has joined:
+
+1. If the stated hash differs from the local whole-schedule hash, the summary disagrees: the node MUST report it as a whole-schedule mismatch ([Section 11.10.8](#11108-tdma-receipt-evidence)), and SHOULD broadcast NC_TDMA_SCHEDULE with its current participant list, with short random jitter and subject to the same per-modality back-off as a disagreeing Transmission.
+2. If the stated hash equals the local one, the summary agrees, as in the reset rule above.
+3. The node MUST NOT judge a modality's hash within one `schedule_suppression_window` of a change to its own participant list for that modality, and judges nothing for a modality it has not joined.
+4. The stated hash MUST NOT change the participant list. It only triggers the schedule exchange; membership changes come from the summary's own facts, joins, schedules and leases as elsewhere in this section.
+
+**Rationale (normative).** A summary states the schedule its sender held when it was sent, which can be minutes old. A joiner's summary at confirmation names only what it knew then, and a summary sent while a join is spreading is behind the join; judged, every node would broadcast once per join past the designated-responder suppression, although the join and schedule messages already carry the change. The suppression window is the time one membership change is given to settle, so it bounds the rule without a new setting. An older summary that still disagrees after that costs at most one broadcast under the back-off, and because the exchange merges and never replaces a participant list, a stale summary cannot reorder a schedule.
+
+[GUIDANCE] The summary hash travels only when the summary does: once at address confirmation, once when the first link connects, and with each periodic refresh sent as a summary rather than as NC_CLAIM_RENEWAL ([Section 11.3.2](#1132-refresh-mechanism)). Where the periodic refresh falls back to NC_CLAIM_RENEWAL, the pre-dive check depends on those two events.
+
+This reconciliation is self-limiting: once the stale node updates its schedule, sender-slot and whole-schedule mismatches cease and no further reconciliation responses are triggered. The exchange is idempotent — each node independently validates participants against claim status and the deterministic algorithm ([Section 11.10.1](#11101-slot-assignment-algorithm)) produces the same schedule once both nodes have the same validated participant set.
 
 **Join-case convergence.** When divergence is caused by a missed NC_TDMA_JOIN, reconciliation is straightforward: the detecting node receives an NC_TDMA_SCHEDULE listing the unknown participant, verifies the participant's claim is active, adds it, and recomputes. Convergence is fast — bounded by the next transmission in the misaligned slot.
 
-**Departure-case convergence.** A node leaves every TDMA schedule when its lease lapses: `claim_is_active(now, claim_renewal_ts, expiration_interval)` turns false, judged on the local clock against the renewal time the node holds. Nodes holding the same renewal time drop the peer at the same instant. Nodes can hold different renewal times for a peer they cannot all hear; three mechanisms keep them in agreement:
+**Departure-case convergence.** A node leaves every TDMA schedule when its lease lapses: `claim_is_active(now, claim_renewal_ts, expiration_interval)` turns false, judged on the local clock against the renewal time the node holds for the claim it holds for the peer. A node holds one claim per node UID ([Section 11.1](#111-address-derivation-and-versioning)), so the lapse of a claim the peer has left (superseded by a later re-claim) never removes the live peer. Nodes holding the same renewal time drop the peer at the same instant. Nodes can hold different renewal times for a peer they cannot all hear; three mechanisms keep them in agreement:
 
 - **Renewal relay.** NC_CLAIM_RENEWAL is forwarded across mesh links within `renewal_relay_min_interval` ([Section 11.7.14](#11714-nc_claim_renewal-32004)), so a node hidden from a peer still learns its renewals.
 - **Ask before dropping.** From `lease_query_lead` before a participant's lease ends, a node asks for a fresher renewal with a known-incarnation NC_NODE_UID_QUERY ([Section 11.7.8](#1178-nc_node_uid_query-32013)). The peer itself, or any node holding a newer renewal of that incarnation, answers; a peer that is really gone stays unanswered, and every node drops it from the same last renewal time. A node that receives NC_TDMA_SCHEDULE listing a peer it dropped asks the same question.
-- **Rejoin on renewal.** Dropping a peer for a lapsed lease (a silence drop) is a local judgement: it is never announced and never becomes a departure. The dropping node remembers the peer's incarnation and the modalities it held. When a renewal of the same incarnation (same address, version and claim origin) with a strictly newer renewal time makes the lease active again, the node re-adds the peer to those modalities directly. Its claim origin is unchanged, so it returns at its original slot order; no join, summary or query is needed.
+- **Rejoin on renewal.** Dropping a peer for a lapsed lease (a silence drop) is a local judgement: it is never announced and never becomes a departure. The dropping node remembers the peer's incarnation and the modalities it held. When a renewal of the same incarnation (same address, version and claim origin) with a strictly newer renewal time makes the lease active again, the node re-adds the peer to those modalities directly. Its slot follows from its address, so it returns at its original slot order; no join, summary or query is needed.
 
 NC_TDMA_SCHEDULE exchange alone still cannot settle a departure, because schedules carry addresses only; it triggers the question above instead. Explicit departure signaling ([Section 13.4](#134-graceful-tdma-departure)) remains future work for a node that leaves on purpose.
 
@@ -1443,7 +1488,9 @@ Each receiver maintains a per-link opportunity table keyed by the UTC-derived `(
 
 For a Transmission by participant slot index `s`, bitmap bit `i` describes the latest physical opportunity owned by participant slot index `i` that occurred strictly before `s`'s current opportunity in the continuous round-robin schedule. The mapping crosses cycle boundaries: the first participant's bitmap refers to the preceding round, while a middle participant's bitmap combines earlier participants from the current round with later participants from the preceding round. The sender's own bit is unused.
 
-A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. A whole-schedule mismatch MUST increment a per-link counter and emit an engineering event. Sender-slot mismatch retains the reconciliation behavior in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation).
+A receiver MUST compare the envelope hash with its local whole-schedule hash and independently verify `node_address_sender` against the UTC-derived expected slot owner. On either mismatch it MUST ignore the complete receipt bitmap while continuing to ingest otherwise valid packets in the Transmission. NC_NODE_SUMMARY states the same hash for each modality its sender has joined ([Section 11.7.1](#1171-nc_node_summary-32000)). A whole-schedule mismatch, whether an envelope or a judged NC_NODE_SUMMARY ([Section 11.10.7](#11107-schedule-divergence-and-reconciliation)) states it, MUST increment a per-link counter, one counter per detection path, and emit an engineering event naming the peer, the modality, the local hash, the peer's hash and the detection path. An implementation SHOULD expose, for each M4P-managed TDMA link, the local whole-schedule hash of its modality and the last mismatch observed for that modality, with its time. Both mismatches trigger the reconciliation in [Section 11.10.7](#11107-schedule-divergence-and-reconciliation): both are judged again after the Transmission's packets are applied, and share one back-off.
+
+[GUIDANCE] Earlier revisions required only a counter and an event for an envelope mismatch, and a summary mismatch was not reported at all. An operator could see that schedules disagreed but not with which peer, by how much, or over which path; the disagreement that matters (a collision that one exchange repaired) is often over by the time anyone looks, which is why the last mismatch is kept with its time.
 
 For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is only a failure sample for the directed pairwise estimator and an input that voids any predicted receipt for that opportunity.
 
