@@ -41,7 +41,7 @@ conformant; M4P then operates from receipt recency and the link descriptors.
 | Reception quality | Any declared subset of `snr_db`, `pdsnr_db`, `rssi_dbm`, and `decode_confidence` on a receipt | `evidence_capabilities`: `reception_quality` with its field list | channel-prior curve |
 | Range | A measured range to a peer | `evidence_capabilities`: `range` | range table on the self row |
 | Peer receipt | A named peer acknowledged a named send or receive opportunity | `evidence_capabilities`: `peer_receipts` | E12 through the shared opportunity table |
-| Descriptors | Modality, class, addressing, scheduling mode, MAC management, operating envelope, collision domain, maximum transmission duration, and endpoint set | fixed registration or descriptor fields | selection of the applicable core rules |
+| Descriptors | Modality, class, addressing, scheduling mode, MAC management, collision domain, maximum transmission duration, and endpoint set | fixed registration or descriptor fields | selection of the applicable core rules |
 | Diagnostics and decode events | Any other adapter measurement or event | free-form observability API | observability only; never evidence |
 
 An implementation MUST reject an unknown or malformed evidence capability at
@@ -53,10 +53,6 @@ reception-quality evidence.
 
 The registration descriptors have these meanings:
 
-- `operating_envelope` is `surface`, `subsurface`, or `both`. Its default is
-  `surface` for radio, LAN, WAN, and satellite links and `both` for acoustic
-  links. A link MAY override its modality default. It is an input to the peer
-  surface-state prior only; it is not reachability evidence.
 - `collision_domain` identifies link instances backed by one physical
   opportunity domain. Absence means the link has no declared sibling.
 - `max_transmission_duration` is a positive integer number of milliseconds: the time needed to transmit
@@ -65,6 +61,12 @@ The registration descriptors have these meanings:
   taking the maximum over participants; an adapter does not compute that rule.
 - The endpoint set of a unicast link is the set of endpoints the adapter can
   currently address. It is an address-table fact, never a reachability claim.
+
+(Revision 2026-11-10; drafted by a Claude agent.) The `operating_envelope`
+descriptor (`surface`, `subsurface`, `both`) is removed, together with the peer
+surface-state prior it fed: M4P holds no surface state and declares no operating
+envelope. Whether a link may transmit is the application's decision, and whether
+a peer is reachable comes only from hearing history.
 
 The typed registration contract defined here is protocol version 1. A daemon
 MUST reject a registration claiming any other version. The version field remains

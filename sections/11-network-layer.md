@@ -310,8 +310,7 @@ so a holder no fresher than the asker forwards the query instead of swallowing i
 
 **Scheduling priority.** NC messages use their catalog priority in the same score-density model as
 application records. NC does not receive a separate class multiplier. The deliberate catalog
-values below place claims above routine data, while demand state at priority 120 competes below
-claims and above lower-priority routine records when novelty and wire size are otherwise equal.
+values below place claims above routine data.
 
 Conflict-related catalog entries in this section define trigger surfaces and message contents. Deterministic winner/loser rules, convergence, and declaration suppression are defined canonically in [Section 11.8](#118-conflict-detection-and-resolution).
 
@@ -344,7 +343,12 @@ catalog values keep protocol NC above routine data while bounding retained state
 | 32,021 | NC_CLIENT_ADDRESS_CONFLICT | Announce | Everywhere | 255 | 3,600 s | Stop using a wrong address |
 | 32,030 | NC_TDMA_JOIN | Announce | Infrastructure only | 200 | 3,600 s | TDMA participant discovery |
 | 32,031 | NC_TDMA_SCHEDULE | Announce | Infrastructure only | 200 | 3,600 s | TDMA schedule convergence |
-| 32,040 | [NC_DEMAND_STATE](#1111-demand-state-record) | Announce | Everywhere | 120 | 120 s | Compact outstanding demand and cures |
+
+Type `32,040` was `NC_DEMAND_STATE`, retired in revision 2026-11-10 (drafted by a Claude agent). A
+receiver treats it like any NC type it does not recognize: it retains the packet as an undecoded
+NC Announce instance under its generic default priority and TTL (priority `50` and `60` seconds
+in the stock core configuration), applies no NC scope restriction and no bootstrap exemption, and
+carries it by the ordinary novelty and spacing path until it expires.
 
 #### 11.7.1 NC_NODE_SUMMARY (32,000)
 
@@ -1492,7 +1496,9 @@ A receiver MUST compare the envelope hash with its local whole-schedule hash and
 
 [GUIDANCE] Earlier revisions required only a counter and an event for an envelope mismatch, and a summary mismatch was not reported at all. An operator could see that schedules disagreed but not with which peer, by how much, or over which path; the disagreement that matters (a collision that one exchange repaired) is often over by the time anyone looks, which is why the last mismatch is kept with its time.
 
-For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is only a failure sample for the directed pairwise estimator and an input that voids any predicted receipt for that opportunity.
+For every set bit whose referenced opportunity exists in the local table, the receiver applies confirmed receipt evidence to every whole retained record carried by that opportunity. For fragments, it accumulates only the referenced byte ranges and confirms the reporting peer only after the ranges cover the complete retained payload. A set bit for an opportunity absent from the local table is a no-op. A clear bit MUST NOT mutate a knowledge cell: it is a failure sample for the directed pairwise estimator and for the reachability counts below, and an input that voids any predicted receipt for that opportunity.
+
+Each bit a peer reports about an opportunity in which this node transmitted is one delivery outcome for that peer on that link in this node's reachability estimate ([Section 9.10](#910-knowledge-driven-scheduling)): a set bit is one success and a clear bit is one failure. The first bit a peer reports about an opportunity is its only verdict on it; later Transmissions from that peer that repeat or contradict it add nothing. An opportunity in which this node did not transmit, including one whose send result was busy, contributes nothing, and so does an opportunity no heard report covers. A link that reports delivered peers at send time has already counted the Transmission and does not count the bits again. (Revision 2026-11-10; drafted by a Claude agent.) Acoustic reachability previously rested on the quality of the last hearing alone, because nothing counted delivery on a broadcast slotted link.
 
 When receipt-only transmissions are enabled, a node that has no packet candidate but holds an unreported set bit SHOULD emit the receipt-only form in its next assigned opportunity. Implementations SHOULD enable this behavior by default. A set bit becomes reported only after the containing Transmission receives a successful send result; busy, failed, and timed-out sends leave it pending.
 
