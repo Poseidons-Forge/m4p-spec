@@ -41,7 +41,7 @@ All values are hexadecimal. Every HKDF is HKDF-Expand with SHA-256 and `L = 32`,
 ```text
 master_psk       000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 network_id       "m4p-vector-net", UTF-8 (14 octets): 6d34702d766563746f722d6e6574
-unix_seconds     1794574800  (2026-11-13T13:00:00Z)
+origin_time      1794574800  (2026-11-13T13:00:00Z), the message's origin time
 P                43200       (12 hours)
 epoch_number     41541 = floor(1794574800 / 43200)
 type_identity A  a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
@@ -139,7 +139,7 @@ fragment at offset 26 (11 octets)  5ea49410c459250306225e
 ```
 
 A receiver that reassembles the three fragments holds the 37-octet ciphertext, derives the same `compressed_key` from the total length, and decrypts with the nonce at `fragment_offset = 0`.
-<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.4.1 and 12.7. -->
+<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.4.1 and 12.7; the time input is the origin time (D12 r6). -->
 
 ---
 

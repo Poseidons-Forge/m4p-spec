@@ -636,9 +636,9 @@ Every node MUST produce byte-identical full forms and rungs for one message unde
 For a stored message on link *L*, a node sends:
 
 - **When *L* carries the plain form:** the plain form if it holds it, otherwise the compressed form it holds.
-- **When *L* carries the compressed form and the node may produce compressed forms of the message:** the best compressed form that fits. A node may produce them when it has the type's DCCL definition and may re-encode the form it holds ([Section 9.11.5](#9115-re-encoding-at-relays)): it holds the PSK when the payload cipher is in use, and a copy it did not originate passed the tag check of step 1 of [Section 9.11.5](#9115-re-encoding-at-relays).
-- **When *L* carries the compressed form and the node may not produce compressed forms of the message, or encoding failed:** the form it holds. This covers a node with no definition for the type, a node without the PSK, and a foreign copy whose tag did not verify. A plain copy on a compressed link carries the carriage byte and so costs one byte more. An implementation SHOULD report an encode failure.
-<!-- PSFI-3515 (per-link compression) re-encoding preconditions added to form selection; drafted by a Claude agent. -->
+- **When *L* carries the compressed form and the node may produce compressed forms of the message:** the best compressed form that fits. A node may produce them when it has the type's DCCL definition and may re-encode the form it holds ([Section 9.11.5](#9115-re-encoding-at-relays)): when the payload cipher is in use, it holds the PSK and a copy it did not originate carries a tag that verified.
+- **When *L* carries the compressed form and the node may not produce compressed forms of the message, or encoding failed:** the form it holds. This covers a node with no definition for the type, a node without the PSK, and, when the payload cipher is in use, a foreign copy that carries no tag or whose tag did not verify. A plain copy on a compressed link carries the carriage byte and so costs one byte more. An implementation SHOULD report an encode failure.
+<!-- PSFI-3515 (per-link compression) re-encoding preconditions added to form selection, untagged copies per D14; drafted by a Claude agent. -->
 
 In every case the modality mask applies as in [Section 5.7.6](#576-optional-field-definitions). A node with a compressed link SHOULD produce the compressed form when it stores a message, at submit or on receipt, so that a send never waits for encoding.
 
@@ -648,11 +648,15 @@ When a client submits a message of a type for which the origin has a DCCL defini
 
 #### 9.11.5 Re-encoding at Relays {#9115-re-encoding-at-relays}
 
-A relay that holds the type's DCCL definition and, when the payload cipher is in use, the PSK MAY compress a message of any class when it puts the message on a link that carries the compressed form, and MAY build degraded rungs of a degradable message it relays ([Section 9.11.2](#9112-degraded-rungs)). To re-encode, the relay:
+A relay that holds the type's DCCL definition and, when the payload cipher is in use, the PSK MAY compress a message of any class when it puts the message on a link that carries the compressed form, and MAY build degraded rungs of a degradable message it relays ([Section 9.11.2](#9112-degraded-rungs)).
 
-1. Verifies the inbound tag, when present ([Section 12.7.3](#1273-tag-keys)). A relay re-encodes only a copy whose tag verified.
+When the payload cipher is in use, a relay MUST NOT re-encode or degrade a copy that carries no tag (`AUTH_TAG_SIZE = 00`); it forwards that copy in the form it arrived. Without a tag the relay cannot tell whether the copy was altered in transit, and re-encoding altered contents would put a different plaintext under the same key and nonce. <!-- PSFI-3515 (per-link compression) untagged copies (D14) drafted by a Claude agent. -->
+
+To re-encode, the relay:
+
+1. When the payload cipher is in use, verifies the inbound tag ([Section 12.7.3](#1273-tag-keys)). A relay re-encodes only a copy whose tag verified.
 2. Decrypts the payload and produces the compressed form or rung.
-3. Encrypts it under the current epoch with the compressed key ([Section 12.7.1](#1271-key-derivation)) and computes a new tag under the compressed tag key.
+3. Encrypts it under the epoch of the message's origin time ([Section 12.4.1](#1241-payload-cipher-key)) with the compressed key ([Section 12.7.1](#1271-key-derivation)) and computes a new tag under the compressed tag key. <!-- PSFI-3515 (per-link compression) origin-time epoch (D12 r6) drafted by a Claude agent. -->
 
 The re-encoded packet keeps the message's identity fields, the mask bits of its carriage byte and the `AUTH_TAG_SIZE` of the copy it was made from. The relay clears `PLAIN`, removes the carriage byte when the mask permits all five modalities, and recomputes `payload_length`. A relay MUST NOT expand a compressed copy into the plain form. <!-- PSFI-3515 (per-link compression) AUTH_TAG_SIZE retention drafted by a Claude agent. -->
 
