@@ -25,16 +25,16 @@ This appendix will provide byte-level test vectors for independent implementatio
 7. **Encryption round-trip** — Plaintext payload through nonce construction, AES-256-CTR encryption, and decryption, verifying ciphertext and recovered plaintext match.
 8. **Fragment byte-range coverage** — Coverage tracking and redundancy decisions for overlapping fragments, re-fragmented fragments, and interactions between fragmented and unfragmented copies.
 9. **Payload forms** (placeholder) — for one message type: the plain input, its full compressed form, every degraded rung, the rungs rebuilt from a middle rung ([Section 9.11.2](#9112-degraded-rungs)), and its type identity at `compressed_encoding_version` 1 with every intermediate serialization ([Section 12.7.2](#1272-type-identity)).
-10. **Payload form keys** — the plain key, the compressed key for two total lengths and two type identities, and both tag keys, with a compressed ciphertext encrypted whole and sliced into fragments ([Section 12.7](#127-payload-form-keys)). See [Appendix D.10](#d10-payload-form-keys).
+10. **Payload form keys** — the plain key, the compressed key for two total lengths and two type identities, and both tag keys, with a compressed ciphertext encrypted whole, sliced into fragments, and each fragment tagged ([Section 12.7](#127-payload-form-keys)). See [Appendix D.10](#d10-payload-form-keys).
 <!-- PSFI-3515 (per-link compression) items 9 and 10, and the rewording of item 8, drafted by a Claude agent. -->
 
 Each test vector will include all intermediate values (hash digests, derived keys, nonce bytes) to enable implementers to isolate errors at each computation step.
 
 ### D.10 Payload Form Keys {#d10-payload-form-keys}
 
-These vectors start from a master PSK, derive one epoch key ([Section 12.4.1](#1241-payload-cipher-key)), derive the payload keys and tag keys of both payload forms from it ([Section 12.7](#127-payload-form-keys)), and encrypt one compressed payload whole and slice its ciphertext into fragments ([Section 12.2.5](#1225-fragmentation-interaction)). They were computed from the formulas of those sections.
+These vectors start from a master PSK, derive one epoch key ([Section 12.4.1](#1241-payload-cipher-key)), derive the payload keys and tag keys of both payload forms from it ([Section 12.7](#127-payload-form-keys)), encrypt one compressed payload whole, slice its ciphertext into fragments ([Section 12.2.5](#1225-fragmentation-interaction)), and tag each fragment ([Section 12.2.3](#1223-authentication-tag)). They were computed from the formulas of those sections.
 
-All values are hexadecimal. Every HKDF is HKDF-Expand with SHA-256 and `L = 32`, with no HKDF-Extract. An `info` string printed over several lines is one octet string, read top to bottom; the right-hand column names each part. The two type identities are arbitrary 32-octet values, not derived from a DCCL definition (item 9 covers that derivation). Authentication tags are not covered here.
+All values are hexadecimal. Every HKDF is HKDF-Expand with SHA-256 and `L = 32`, with no HKDF-Extract. An `info` string printed over several lines is one octet string, read top to bottom; the right-hand column names each part. The two type identities are arbitrary 32-octet values, not derived from a DCCL definition (item 9 covers that derivation).
 
 **Inputs.**
 
@@ -139,7 +139,24 @@ fragment at offset 26 (11 octets)  5ea49410c459250306225e
 ```
 
 A receiver that reassembles the three fragments holds the 37-octet ciphertext, derives the same `compressed_key` from the total length, and decrypts with the nonce at `fragment_offset = 0`.
-<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.4.1 and 12.7; the time input is the origin time (D12 r6). -->
+
+**Fragment tags** ([Section 12.2.3](#1223-authentication-tag), [Section 12.2.5](#1225-fragmentation-interaction)). Each fragment above is tagged on its own with `AUTH_TAG_SIZE = 11`, so the full 16-octet AES-CMAC is shown; a 4- or 8-octet tag is its first 4 or 8 octets. The key is `compressed_tag_key` of type identity A. The nonce is the one above with `fragment_offset` set to the fragment's offset. `header_aad` is `flags ‖ fragment field ‖ [carriage] ‖ payload_length`, where the fragment field is `offset << 1 | end` in two octets and `payload_length` is the fragment's own length. The carriage byte is absent: the packet is compressed and allowed on every modality.
+
+```text
+offset  end  flags  nonce                             header_aad    tag
+ 0      0    c1     d6c835cf00a70121705b04d200000000  c10000000d    ad340bfe685229e11eb7d7da1f117b62
+13      0    c1     d6c835cf00a70121705b04d2000d0000  c1001a000d    e5ab74fe898f9abf3a217c92ee66c326
+26      1    c1     d6c835cf00a70121705b04d2001a0000  c10035000b    bcf8b4323e8dcf35ef7e791570bdbd6f
+```
+
+Two variants check the fragment field and its position. The last fragment with its `end` bit cleared has a different tag, so a node without the key cannot cut the message short. The middle fragment with a carriage byte (`0x03`: modalities 0 and 1, `PLAIN` clear) shows the fragment field before the carriage byte.
+
+```text
+variant          offset  end  flags  header_aad      tag
+end bit cleared  26      0    c1     c10034000b      2cd7b8a1de1c184124c466017bc166ca
+with carriage    13      0    c5     c5001a03000d    a11d115a4a4202bfb45da3a6baa59a8c
+```
+<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.2.3, 12.4.1 and 12.7; the time input is the origin time (D12 r6); fragment tags added for D15. -->
 
 ---
 
