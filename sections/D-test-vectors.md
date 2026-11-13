@@ -41,9 +41,9 @@ All values are hexadecimal. Every HKDF is HKDF-Expand with SHA-256 and `L = 32`,
 ```text
 master_psk       000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 network_id       "m4p-vector-net", UTF-8 (14 octets): 6d34702d766563746f722d6e6574
-origin_time      1794574800  (2026-11-13T13:00:00Z), the message's origin time
+origin_time      1794602096  (2026-11-13T20:34:56Z), the message's origin time; its time of day is the nonce's timestamp_24h below
 P                43200       (12 hours)
-epoch_number     41541 = floor(1794574800 / 43200)
+epoch_number     41541 = floor(1794602096 / 43200)
 type_identity A  a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf
 type_identity B  c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf
 ```
