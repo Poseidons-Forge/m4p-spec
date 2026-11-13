@@ -316,6 +316,8 @@ Present when `CARRIAGE_PRESENT` is set. The carriage byte says how a message is 
 
 An absent carriage byte means that all five modalities are permitted and that the payload is in the compressed form.
 
+`PLAIN` names the payload form, not whether the payload is encrypted: encryption is configured network-wide ([Section 2.4.2](#242-required-configuration-must)), and no header field marks it per packet. <!-- PSFI-3515 (per-link compression) no per-packet encryption marker (D11) drafted by a Claude agent. -->
+
 An origin node authors the effective mask when the application submits the message: a per-message
 override replaces the origin's per-type default, and otherwise that origin default applies.
 Forwarding nodes MUST use only this authored wire value: absence permits every modality, and a
