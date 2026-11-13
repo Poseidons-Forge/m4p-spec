@@ -130,7 +130,7 @@ Where `flags` = 7 bits (see [Section 5.7.4](#574-response-packet-flags-7-bits)).
 Network Control (NC) messages (Message Type IDs 32,000–32,767) use dedicated header formats that differ from the application-facing headers in three ways:
 
 1. **Address fields contain Node Addresses (NAs), not Client Addresses (CAs).** NC messages are exchanged between nodes, not between application clients.
-2. **No flags field.** NC messages do not carry optional fields — no fragmentation, no priority override, no modality mask, no TTL override, no CA fingerprint, and no authentication tag.
+2. **No flags field.** NC messages do not carry optional fields — no fragmentation, no priority override, no carriage byte, no TTL override, no CA fingerprint, and no authentication tag.
 3. **NC messages MUST NOT be fragmented.** NC payloads are designed to fit within a single packet. The transport MUST NOT set `IS_FRAGMENT` on an NC message, and MUST NOT apply intermediate fragmentation to NC messages.
 
 Two NC header variants are defined, corresponding to the two NC transport patterns:
@@ -207,7 +207,7 @@ age = max(0, age)
 
 **Message Counter.** `msg_counter` is a 7-bit rolling counter, range `0`–`127`, maintained independently per source address. Each Client Address hosted on a node has its own counter, and the node itself maintains a separate counter for Network Control messages (which use the Node Address as source, per [Section 11.6.1](#1161-transport-properties)). A node hosting *n* clients therefore maintains *n* + 1 independent counters. Each counter is incremented for every new message originated by that source and rolls over to `0` after `127`.
 
-**Payload Length and Payload.** `payload_length` maximum value: `65,535`. `payload_length = 0` is valid; applications MAY submit zero-byte payloads for message types whose schema has no encoded fields. The interpretation of the payload is determined by the `message_type_id` and is outside the scope of this specification (except for Network Control messages, whose payload formats are defined in [Section 11.7](#117-nc-message-catalog)).
+**Payload Length and Payload.** `payload_length` maximum value: `65,535`. `payload_length = 0` is valid; applications MAY submit zero-byte payloads for message types whose schema has no encoded fields. The interpretation of the payload is determined by the `message_type_id` and is outside the scope of this specification (except for Network Control messages, whose payload formats are defined in [Section 11.7](#117-nc-message-catalog)). An application payload is carried in its plain form or its compressed form; [Section 9.11](#911-payload-forms) defines the two forms, while application schemas stay deployment-specific.
 
 ### 5.7 Flags and Optional Fields
 
@@ -221,7 +221,7 @@ All flag-gated optional fields are defined in [Section 5.7.6](#576-optional-fiel
 |---:|---|---|
 | 0 | `IS_FRAGMENT` | Fragment fields are present. |
 | 1 | `PRIORITY_OVERRIDE_PRESENT` | `priority_override` field is present. |
-| 2 | `MODALITY_MASK_PRESENT` | `modality_mask` field is present. |
+| 2 | `CARRIAGE_PRESENT` | `carriage` field is present. |
 | 3 | `TTL_OVERRIDE_PRESENT` | `ttl_override` field is present. |
 | 4 | `STATUS_KEY_PRESENT` | `status_key_length` and `status_key_string` fields are present. |
 | 5 | `CA_FINGERPRINT_PRESENT` | `ca_fingerprint` field is present. |
@@ -233,7 +233,7 @@ All flag-gated optional fields are defined in [Section 5.7.6](#576-optional-fiel
 |---:|---|---|
 | 0 | `IS_FRAGMENT` | Fragment fields are present. |
 | 1 | `PRIORITY_OVERRIDE_PRESENT` | `priority_override` field is present. |
-| 2 | `MODALITY_MASK_PRESENT` | `modality_mask` field is present. |
+| 2 | `CARRIAGE_PRESENT` | `carriage` field is present. |
 | 3 | `TTL_OVERRIDE_PRESENT` | `ttl_override` field is present. |
 | 4 | `RESERVED` | Reserved for future use; MUST be `0` in this version. |
 | 5 | `CA_FINGERPRINT_PRESENT` | `ca_fingerprint` field is present. |
@@ -247,7 +247,7 @@ Event does not define `STATUS_KEY_PRESENT`, and no Event-specific optional field
 |---:|---|---|
 | 0 | `IS_FRAGMENT` | Fragment fields are present. |
 | 1 | `PRIORITY_OVERRIDE_PRESENT` | `priority_override` field is present. |
-| 2 | `MODALITY_MASK_PRESENT` | `modality_mask` field is present. |
+| 2 | `CARRIAGE_PRESENT` | `carriage` field is present. |
 | 3 | `TTL_OVERRIDE_PRESENT` | `ttl_override` field is present. |
 | 4 | `ADDITIONAL_DEST_PRESENT` | `additional_destinations` field is present. |
 | 5 | `CA_FINGERPRINT_PRESENT` | `ca_fingerprint` field is present. |
@@ -259,7 +259,7 @@ Event does not define `STATUS_KEY_PRESENT`, and no Event-specific optional field
 |---:|---|---|
 | 0 | `IS_FRAGMENT` | Fragment fields are present. |
 | 1 | `PRIORITY_OVERRIDE_PRESENT` | `priority_override` field is present. |
-| 2 | `MODALITY_MASK_PRESENT` | `modality_mask` field is present. |
+| 2 | `CARRIAGE_PRESENT` | `carriage` field is present. |
 | 3 | `TTL_OVERRIDE_PRESENT` | `ttl_override` field is present. |
 | 4 | `CA_FINGERPRINT_PRESENT` | `ca_fingerprint` field is present. |
 | [6:5] | `AUTH_TAG_SIZE` | 2-bit field selecting authentication tag size. |
@@ -270,7 +270,7 @@ When multiple optional fields are present, they MUST appear in the following ord
 
 1. Fragment fields (`IS_FRAGMENT`)
 2. `priority_override` (`PRIORITY_OVERRIDE_PRESENT`)
-3. `modality_mask` (`MODALITY_MASK_PRESENT`)
+3. `carriage` (`CARRIAGE_PRESENT`)
 4. `ttl_override` (`TTL_OVERRIDE_PRESENT`)
 5. `additional_dest_count` + `additional_dest[]` (`ADDITIONAL_DEST_PRESENT`, Request packets only) / `status_key_length` + `status_key_string` (`STATUS_KEY_PRESENT`, Status packets only). Event packets define no class-specific optional field in this position.
 6. `ca_fingerprint` (`CA_FINGERPRINT_PRESENT`)
@@ -285,7 +285,7 @@ When multiple optional fields are present, they MUST appear in the following ord
 | `offset` | `IS_FRAGMENT` | 15 bits | Byte offset into the original ciphertext payload, zero-based. |
 | `end` | `IS_FRAGMENT` | 1 bit | `1` for the final fragment; `0` otherwise. |
 | `priority_override` | `PRIORITY_OVERRIDE_PRESENT` | 8 bits | Priority value `0`–`255` (higher = higher priority). Replaces the message type's default priority. |
-| `modality_mask` | `MODALITY_MASK_PRESENT` | 8 bits | Bitmask of permitted data link modalities for this packet. |
+| `carriage` | `CARRIAGE_PRESENT` | 8 bits | Permitted data link modalities (bits 0–4) and the payload form of this packet (bit 5). |
 | `ttl_override` | `TTL_OVERRIDE_PRESENT` | 8 bits | Piecewise-linear encoded TTL replacing the message type's default. |
 | `additional_dest_count` | `ADDITIONAL_DEST_PRESENT` | 8 bits | Number of additional destination CAs beyond the `destination` header field. Request packets only. |
 | `additional_dest[]` | `ADDITIONAL_DEST_PRESENT` | `additional_dest_count` × CA width | The additional destination CAs, in ascending CA order. Request packets only. |
@@ -298,28 +298,35 @@ When multiple optional fields are present, they MUST appear in the following ord
 
 Present when `IS_FRAGMENT` is set. The two sub-fields (`offset` and `end`) occupy 16 bits (2 bytes) total. See [Section 8](#8-fragmentation-and-reassembly) for full fragmentation semantics.
 
-##### Modality Mask
+##### Carriage
 
-Present when `MODALITY_MASK_PRESENT` is set. The bit assignments are:
+<!-- PSFI-3515 (per-link compression) update drafted by a Claude agent. -->
 
-| Bit | Modality |
+Present when `CARRIAGE_PRESENT` is set. The carriage byte says how a message is carried: which modalities it may use (the **modality mask**, bits 0–4) and, with `PLAIN`, in which payload form this packet carries it ([Section 9.11](#911-payload-forms)). The bit assignments are:
+
+| Bit | Meaning |
 |---:|---|
-| 0 | Acoustic |
-| 1 | Radio |
-| 2 | Satellite |
-| 3 | LAN |
-| 4 | WAN |
-| 5–7 | Reserved |
+| 0 | Acoustic permitted |
+| 1 | Radio permitted |
+| 2 | Satellite permitted |
+| 3 | LAN permitted |
+| 4 | WAN permitted |
+| 5 | `PLAIN`: the payload is in the plain form |
+| 6–7 | Reserved |
+
+An absent carriage byte means that all five modalities are permitted and that the payload is in the compressed form.
 
 An origin node authors the effective mask when the application submits the message: a per-message
-override replaces the origin's per-type default, and otherwise that origin default applies. If the
-effective mask permits all five defined modalities (`0b00011111`), the field MUST be absent. If it
-is narrower, the field MUST be present and carry that effective mask. Forwarding nodes MUST use
-only this authored wire value: absence permits every modality, and a forwarding node MUST NOT apply
-its own per-type default. Nodes MUST NOT transmit a packet on a modality excluded by a present
-mask.
+override replaces the origin's per-type default, and otherwise that origin default applies.
+Forwarding nodes MUST use only this authored wire value: absence permits every modality, and a
+forwarding node MUST NOT apply its own per-type default. Nodes MUST NOT transmit a packet on a
+modality excluded by a present mask.
 
 *PSFI-1351 note drafted by a Codex agent.*
+
+The carriage byte MUST be present when the effective mask is narrower than all five defined modalities (`0b00011111`) or when the packet carries the plain form. Otherwise it MUST be absent. A plain packet therefore always carries the byte, and a compressed packet carries it only when its mask is narrower than all five modalities.
+
+Nodes MUST NOT change the mask bits. A node that changes a packet's form ([Section 9.11.5](#9115-re-encoding-at-relays)) keeps the packet's identity fields and mask bits, clears `PLAIN`, removes the byte when the mask permits all five modalities, and recomputes `payload_length`, the ciphertext and the authentication tag. The carriage byte is part of `header_aad` ([Section 12.2.3](#1223-authentication-tag)), because `PLAIN` selects the decryption key ([Section 12.7](#127-payload-form-keys)).
 
 The canonical modality vocabulary is `acoustic`, `radio`, `satellite`, `lan`, and `wan`. Operator and API parsers MAY accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but any emitted modality name MUST use `wan`. These aliases all select bit 4 and do not alter the wire encoding.
 

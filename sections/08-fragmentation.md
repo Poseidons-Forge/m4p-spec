@@ -132,6 +132,9 @@ Reassembly for delivery is performed at the destination node for Request/Respons
 
 The reassembly key groups all fragments of the same message into a single reassembly buffer and keys the received byte-range set used for fragment forwarding suppression ([Section 6.5](#65-deduplication-rules)).
 
+<!-- PSFI-3515 (per-link compression) paragraph drafted by a Claude agent. -->
+**Payload forms.** Fragments of a plain copy and of a compressed copy of one message carry different bytes ([Section 9.11](#911-payload-forms)). Nodes MUST track received byte ranges and completion separately per form, as indicated by the `PLAIN` bit of each fragment's carriage byte, and MUST NOT reassemble fragments of different forms together. The receiver derives the compressed payload key after reassembly, from the total length ([Section 12.7.1](#1271-key-derivation)).
+
 > **Design rationale:** When a broadcast or multicast Request elicits fragmented Responses from multiple nodes, all Responses share the same `request_MIID`. Without `source_CA` in the reassembly key, fragments from different responders would collide in the same reassembly buffer, producing corrupted payloads. Including `source_CA` keeps the reassembly key consistent with the Response deduplication key defined in [Section 6.5](#65-deduplication-rules).
 
 Implementations SHOULD buffer out-of-order and overlapping fragments until all byte ranges are covered or the message's TTL expires. Overlapping fragments (from different nodes using different fragment sizes) carry identical ciphertext at the same byte positions and can be safely merged.
@@ -202,6 +205,9 @@ Fragment NACK payload:
 > **Design rationale:** Byte-range NACKs align naturally with the offset-based fragment model: the requester reports gaps in its byte coverage map without needing to know how the sender originally fragmented the message. The number of contiguous gaps is typically small (often 1–3 ranges even when many individual fragments are missing), so byte-range encoding is usually more compact than enumerating missing fragments individually. Any node receiving a byte-range NACK can retransmit using its own fragment sizes to cover the requested ranges.
 
 Fragment NACKs SHOULD be rate-limited to avoid excessive retransmission requests over constrained links.
+
+<!-- PSFI-3515 (per-link compression) paragraph drafted by a Claude agent. -->
+A node resolves a Fragment NACK against the payload form it sends on the link the NACK arrived on ([Section 9.11.3](#9113-form-selection-per-link)), because the requester's byte ranges refer to that form's ciphertext.
 
 > [GUIDANCE] Intermediate nodes SHOULD only send Fragment NACKs when they have a reasonable expectation of completing reassembly (e.g., most fragments already received) and the link has sufficient budget for both the NACK and the expected retransmissions. On severely constrained links (e.g., acoustic), Fragment NACKs MAY be disabled entirely — the store-carry-forward model provides natural redundancy through multiple peers and paths. Fragment NACKs are most useful on higher-bandwidth links (LAN, radio) where retransmission cost is low.
 

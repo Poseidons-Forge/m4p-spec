@@ -99,6 +99,9 @@ An unfragmented packet is considered a **duplicate** if a packet with the same d
 - Nodes MUST NOT deliver duplicate packets to local clients.
 - The deduplication cache SHOULD retain entries for at least the duration of the packet's effective TTL.
 
+**Payload forms.** A message may arrive in its plain form, its full compressed form or a degraded rung ([Section 9.11](#911-payload-forms)). Deduplication and the status semantic check order copies with one deduplication key by form and length in the fidelity order of [Section 9.11](#911-payload-forms), not by length alone. A copy replaces the stored form when it ranks higher in that order, or when it is the plain form and the stored copy is the full compressed form; any other copy is a duplicate. Whether a replacing copy is delivered again follows [Section 9.11.6](#9116-stored-form-and-delivery). A copy whose authentication tag fails at a node that would deliver it is discarded and does not count as received ([Section 12.7.3](#1273-tag-keys)).
+<!-- PSFI-3515 (per-link compression) paragraph drafted by a Claude agent. -->
+
 **Response deduplication.** Response packets do not carry their own `msg_counter` field and do not have an independent MIID. Instead, Response deduplication relies on the following transport-enforced invariant:
 
 **The transport layer MUST reject a Response submission from a local client if a Response with the same `(request_MIID, message_type_id, source_CA)` has already been accepted.** Accepting a duplicate Response would produce an AES-CTR nonce collision (see [Section 12.2.2](#1222-nonce-derivation)), breaking payload confidentiality. The transport MUST return an error to the submitting client and MUST NOT encrypt or transmit the duplicate Response.

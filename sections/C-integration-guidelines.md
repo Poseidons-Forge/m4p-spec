@@ -60,4 +60,16 @@ M4P is uninvolved in scheduling decisions. The transport layer receives transmis
 
 **What remains application-specific.** M4P does not choose mission policy (for example, which links use link-managed vs M4P-managed mode, how conservative contention timing should be, or which modem-level knobs to tune by mission phase). Applications continue to own those decisions. Temporary schedule inconsistency during transitions is acceptable — M4P's transport layer is schedule-agnostic and sends when the adapter offers an opportunity.
 
+### C.3 Payload Forms and Catalogs {#c3-payload-forms-and-catalogs}
+
+<!-- PSFI-3515 (per-link compression) section drafted by a Claude agent. -->
+
+**What moves.** Messages travel as plain protobuf on links that declare the plain form, and are compressed with DCCL only on links that need it ([Section 9.11](#911-payload-forms)). Clients always submit and receive plain protobuf; the compressed form exists only inside the transport. A relay compresses a message when it first puts it on a compressed link, and the message stays compressed from there to its destination.
+
+**Which nodes need what.** Every node with a compressed link SHOULD carry the message catalog (the DCCL definitions and retention priorities) and, when the payload cipher is in use, the PSK. Without the catalog a node cannot compress, degrade or decode a type: a plain copy goes out plain on a compressed link, one byte larger, a status that does not fit is not shrunk, and on an encrypted network a tagged compressed packet cannot be re-fragmented ([Section 9.11.5](#9115-re-encoding-at-relays)). A node that holds the PSK can read every payload it relays ([Section 12.6.2](#1262-what-this-model-does-not-provide)).
+
+**Plain-only types.** A message type with no DCCL definition travels plain on every link its modality mask permits. Give a type a DCCL definition when it rides compressed links often enough for its size to matter, and restrict its modality mask when it must never ride them.
+
+**Catalog changes.** A change to a type's DCCL definition or to the retention priority of one of its fields changes its type identity ([Section 12.7.2](#1272-type-identity)) and is a wire change for that type's compressed form. Renaming a field or enum value, editing a comment, or changing `max_bytes`, the type's transport priority, its TTL or its modality mask is not.
+
 ---
