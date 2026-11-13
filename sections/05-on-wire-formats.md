@@ -177,7 +177,7 @@ Offset  Field                          Width
 | `message_type_id` | CTE: 1 or 2 B | Classifies the message type | All packets |
 | `source` | CA/NA: 8b or 16b | Address of the originating endpoint | All packets |
 | `destination` | CA/NA: 8b or 16b | On-wire address of the intended recipient, resolved from the application-provided destination ClientUID by the transport layer; `0` = broadcast. For group Requests (`ADDITIONAL_DEST_PRESENT` set), contains the lowest CA in the destination list. | Request, Response, NC Targeted |
-| `timestamp_24h` | 17b | Seconds since midnight when the message was originated; used for MIID and TTL | Status, Event, Request, NC Announce, NC Targeted |
+| `timestamp_24h` | 17b | Seconds since midnight UTC when the message was originated; used for MIID and TTL | Status, Event, Request, NC Announce, NC Targeted |
 | `msg_counter` | 7b | Per-source rolling counter (0–127); combined with `source` and `timestamp_24h` to form the MIID | Status, Event, Request, NC Announce, NC Targeted |
 | `timestamp_24h_request` | 17b | Copied from the original Request; used for correlation via MIID | Response only |
 | `msg_counter_request` | 7b | Copied from the original Request; used for correlation via MIID | Response only |
