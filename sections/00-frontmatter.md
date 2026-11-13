@@ -101,7 +101,7 @@ including commercial, under the following terms:
     - [8.3.4 Independent Forwarding](#834-independent-forwarding)
     - [8.3.5 Encryption Interaction](#835-encryption-interaction)
   - [8.4 Reassembly](#84-reassembly)
-    - [8.4.1 Cross-Form Deduplication](#841-cross-form-deduplication)
+    - [8.4.1 Deduplication of Fragmented and Unfragmented Copies](#841-deduplication-of-fragmented-and-unfragmented-copies)
     - [8.4.2 Status Reassembly Supersession](#842-status-reassembly-supersession)
     - [8.4.3 Event Reassembly Behavior](#843-event-reassembly-behavior)
   - [8.5 Fragment NACKs (Network Control Type 32,003)](#85-fragment-nacks-network-control-type-32003)

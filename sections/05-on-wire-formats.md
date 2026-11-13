@@ -326,7 +326,7 @@ modality excluded by a present mask.
 
 The carriage byte MUST be present when the effective mask is narrower than all five defined modalities (`0b00011111`) or when the packet carries the plain form. Otherwise it MUST be absent. A plain packet therefore always carries the byte, and a compressed packet carries it only when its mask is narrower than all five modalities.
 
-Nodes MUST NOT change the mask bits. A node that changes a packet's form ([Section 9.11.5](#9115-re-encoding-at-relays)) keeps the packet's identity fields and mask bits, clears `PLAIN`, removes the byte when the mask permits all five modalities, and recomputes `payload_length`, the ciphertext and the authentication tag. The carriage byte is part of `header_aad` ([Section 12.2.3](#1223-authentication-tag)), because `PLAIN` selects the decryption key ([Section 12.7](#127-payload-form-keys)).
+Nodes MUST NOT change the mask bits. A node that changes a packet's form ([Section 9.11.5](#9115-re-encoding-at-relays)) keeps the packet's identity fields, mask bits and `AUTH_TAG_SIZE`, clears `PLAIN`, removes the byte when the mask permits all five modalities, and recomputes `payload_length`, the ciphertext and the authentication tag. The carriage byte is part of `header_aad` ([Section 12.2.3](#1223-authentication-tag)), because `PLAIN` selects the decryption key ([Section 12.7](#127-payload-form-keys)).
 
 The canonical modality vocabulary is `acoustic`, `radio`, `satellite`, `lan`, and `wan`. Operator and API parsers MAY accept `mqtt`, `ip/mqtt`, and `ip-mqtt` as aliases for `wan`, but any emitted modality name MUST use `wan`. These aliases all select bit 4 and do not alter the wire encoding.
 

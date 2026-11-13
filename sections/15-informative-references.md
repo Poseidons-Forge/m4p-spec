@@ -22,6 +22,4 @@ The following documents are referenced for background and context. They are not 
 
 - **[RFC3552]** Rescorla, E. and B. Korver, "Guidelines for Writing RFC Text on Security Considerations", BCP 72, RFC 3552, July 2003. Guidance document for security analysis methodology.
 
-- **[SP800-108r1]** Chen, L., "Recommendation for Key Derivation Using Pseudorandom Functions", NIST Special Publication 800-108 Revision 1, August 2022. Alternative KDF referenced in [Section 12.4.1](#1241-payload-cipher-key) guidance.
-
 ---

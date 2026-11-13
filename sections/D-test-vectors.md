@@ -23,10 +23,10 @@ This appendix will provide byte-level test vectors for independent implementatio
 5. **TTL encoding round-trip** — Encode and decode at each piecewise boundary (0, 30, 60, 90, 120, 180, 255) to verify the non-linear encoding.
 6. **CMAC authentication tag** — Tag computation including header AAD construction for each packet class ([Section 12.2.3](#1223-authentication-tag), *Tag computation*), with 4-byte, 8-byte, and 16-byte truncation outputs.
 7. **Encryption round-trip** — Plaintext payload through nonce construction, AES-256-CTR encryption, and decryption, verifying ciphertext and recovered plaintext match.
-8. **Fragment byte-range coverage** — Coverage tracking and redundancy decisions for overlapping fragments, re-fragmented fragments, and cross-form interactions.
-9. **Payload forms** (placeholder) — for one message type: the plain input, its full compressed form, every degraded rung, the rungs rebuilt from a middle rung ([Section 9.11.2](#9112-degraded-rungs)), and its type identity with every intermediate serialization ([Section 12.7.2](#1272-type-identity)).
+8. **Fragment byte-range coverage** — Coverage tracking and redundancy decisions for overlapping fragments, re-fragmented fragments, and interactions between fragmented and unfragmented copies.
+9. **Payload forms** (placeholder) — for one message type: the plain input, its full compressed form, every degraded rung, the rungs rebuilt from a middle rung ([Section 9.11.2](#9112-degraded-rungs)), and its type identity at `compressed_encoding_version` 1 with every intermediate serialization ([Section 12.7.2](#1272-type-identity)).
 10. **Payload form keys** (placeholder) — the plain key, the compressed key for two total lengths and two type identities, and both tag keys, with a compressed ciphertext encrypted whole and sliced into fragments ([Section 12.7](#127-payload-form-keys)).
-<!-- PSFI-3515 (per-link compression) items 9 and 10 drafted by a Claude agent. -->
+<!-- PSFI-3515 (per-link compression) items 9 and 10, and the rewording of item 8, drafted by a Claude agent. -->
 
 Each test vector will include all intermediate values (hash digests, derived keys, nonce bytes) to enable implementers to isolate errors at each computation step.
 

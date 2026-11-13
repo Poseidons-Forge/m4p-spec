@@ -115,7 +115,8 @@ Intermediate nodes MUST treat each fragment as independently forwardable as soon
 
 When `AUTH_TAG_SIZE == 00`, fragmenting or re-fragmenting encrypted payloads requires no cryptographic operations — the ciphertext is split as opaque bytes (AES-CTR ciphertext can be split at arbitrary byte boundaries).
 
-When `AUTH_TAG_SIZE != 00`, per-fragment authentication tags must be computed for each new fragment, which requires access to the PSK. Consequently, only nodes that possess the PSK MAY fragment or re-fragment authenticated messages. Nodes without the PSK (e.g., infrastructure relays) MUST NOT fragment or re-fragment authenticated messages — if the message or fragment exceeds the link budget, it is skipped for that link.
+When `AUTH_TAG_SIZE != 00`, per-fragment authentication tags must be computed for each new fragment, which requires access to the PSK and, for a packet carrying the compressed form, the type identity of its message type ([Section 12.7.3](#1273-tag-keys)). Consequently, only nodes that possess the PSK MAY fragment or re-fragment authenticated messages, and only nodes that also hold the type identity MAY fragment or re-fragment authenticated compressed packets of that type. Nodes without the PSK (e.g., infrastructure relays) MUST NOT fragment or re-fragment authenticated messages, and nodes without the type identity MUST NOT fragment or re-fragment authenticated compressed packets of that type — if the message or fragment exceeds the link budget, it is skipped for that link.
+<!-- PSFI-3515 (per-link compression) type-identity requirement drafted by a Claude agent. -->
 
 See [Section 12.2.4](#1224-transport-pipeline) and [Section 12.2.5](#1225-fragmentation-interaction) for the full encrypt-then-fragment pipeline and per-fragment authentication tag computation.
 
@@ -141,16 +142,18 @@ Implementations SHOULD buffer out-of-order and overlapping fragments until all b
 
 **Opportunistic intermediate reassembly.** Intermediate nodes MAY opportunistically reassemble fragments into a complete message for local storage. A reassembled message is stored as an unfragmented message and is available for future transmission opportunities on any link. Opportunistic reassembly is not required for correct forwarding — fragments are always forwarded individually as they arrive per [Section 8.3.4](#834-independent-forwarding).
 
-#### 8.4.1 Cross-Form Deduplication
+#### 8.4.1 Deduplication of Fragmented and Unfragmented Copies {#841-deduplication-of-fragmented-and-unfragmented-copies}
 
-Because nodes may fragment unfragmented messages (see [Section 8.3](#83-fragmentation-behavior)), the same message may exist in the network in both unfragmented and fragmented form simultaneously. Cross-form deduplication is handled by message-level deduplication ([Section 6.5](#65-deduplication-rules)) and received byte-range tracking ([Section 8.4](#84-reassembly)).
+<!-- PSFI-3515 (per-link compression) subsection restated per payload form and renamed (was "Cross-Form Deduplication"); drafted by a Claude agent. -->
+
+Because nodes may fragment unfragmented messages (see [Section 8.3](#83-fragmentation-behavior)), the same message may exist in the network as fragmented and unfragmented copies simultaneously, and in either payload form ([Section 9.11](#911-payload-forms)). Deduplication of fragmented and unfragmented copies is handled by message-level deduplication ([Section 6.5](#65-deduplication-rules)) and received byte-range tracking ([Section 8.4](#84-reassembly)), both kept per payload form as identified by the `PLAIN` bit of the carriage byte.
 
 Nodes performing delivery reassembly (destination nodes for directed traffic, and every receiving node for Status/Event traffic) MUST apply both mechanisms to prevent double delivery:
 
-- When a complete unfragmented message is received and delivered, the node MUST record the base deduplication key as delivered — `(MIID, message_type_id)` for Status/Event/Request packets, or `(request_MIID, message_type_id, source_CA)` for Response packets. The node MUST mark the received byte-range set for the corresponding reassembly key as fully covered. Subsequent fragments for that reassembly key are therefore redundant and MUST be discarded. If a reassembly buffer exists for the same reassembly key, the node SHOULD discard it.
-- When reassembly completes from fragments and the message is delivered, the node MUST record the base deduplication key as delivered. A subsequently received unfragmented copy with the same deduplication key MUST be treated as a duplicate and MUST NOT be re-delivered.
+- When a complete unfragmented copy is received and delivered, the node MUST record the base deduplication key as delivered — `(MIID, message_type_id)` for Status/Event/Request packets, or `(request_MIID, message_type_id, source_CA)` for Response packets. The node MUST mark the received byte-range set of that copy's form, under the corresponding reassembly key, as fully covered. Subsequent fragments of that form for that reassembly key are therefore redundant and MUST be discarded, unless they belong to a copy that replaces the stored form ([Section 6.5](#65-deduplication-rules)). If a reassembly buffer exists for the same reassembly key and form, the node SHOULD discard it. Fragments of the other form are tracked in their own byte-range set.
+- When reassembly completes from fragments and the message is delivered, the node MUST record the base deduplication key as delivered. A subsequently received unfragmented copy with the same deduplication key MUST be treated as a duplicate and MUST NOT be re-delivered, unless it replaces the stored form; whether a replacing copy is delivered again follows [Section 9.11.6](#9116-stored-form-and-delivery).
 
-Intermediate forwarding nodes that hold a complete unfragmented message in their store MAY suppress forwarding of received fragments for the same reassembly key, since they can serve the same forwarding purpose by fragmenting the stored message on demand.
+Intermediate forwarding nodes that hold a complete unfragmented copy in their store MAY suppress forwarding of received fragments of the same form for the same reassembly key, since they can serve the same forwarding purpose by fragmenting the stored copy on demand. This permission does not extend to fragments of a copy that replaces the stored form.
 
 #### 8.4.2 Status Reassembly Supersession
 

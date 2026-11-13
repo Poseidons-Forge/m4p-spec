@@ -156,6 +156,8 @@ def compute_ca_fingerprint(client_uid: str, ca: int, address_version: int) -> in
 
 ### A.7 Authentication Tag (CMAC with Header AAD)
 
+<!-- PSFI-3515 (per-link compression) carriage byte added to the header_aad builders; drafted by a Claude agent. -->
+
 **Compatibility note.** Earlier draft reference code mapped Network Control Message Type IDs (`32,000-32,767`) to `"request"` in `get_packet_class` with an inline warning comment. This version raises `ValueError` for NC Message Type IDs so NC exclusion from payload encryption/header-AAD handling is explicit.
 
 ```python
@@ -191,29 +193,41 @@ def get_packet_class(message_type_id: int) -> str:
 
 # --- Header AAD construction ---
 
-def build_header_aad_status(flags: int, payload_length: int) -> bytes:
+CARRIAGE_PRESENT = 1 << 2         # flags bit 2, in all four classes
+ADDITIONAL_DEST_PRESENT = 1 << 4  # Request flags bit 4
+
+
+def build_header_aad_status(flags: int, payload_length: int,
+                            carriage: int = 0) -> bytes:
     """Construct header_aad for a Status or Event packet.
 
-    header_aad = flags (1 byte) || payload_length (2 bytes, big-endian)
+    header_aad = flags (1 byte) || [carriage (1 byte)]
+                 || payload_length (2 bytes, big-endian)
+
+    carriage is present only when CARRIAGE_PRESENT (bit 2) is set in flags.
     """
-    return (
-        flags.to_bytes(1, 'big')
-        + payload_length.to_bytes(2, 'big')
-    )
+    aad = flags.to_bytes(1, 'big')
+    if flags & CARRIAGE_PRESENT:
+        aad += carriage.to_bytes(1, 'big')
+    aad += payload_length.to_bytes(2, 'big')
+    return aad
 
 
 def build_header_aad_request(destination: int, flags: int,
                              payload_length: int,
                              is_16bit_addressing: bool,
-                             additional_dests: list[int] | None = None) -> bytes:
+                             additional_dests: list[int] | None = None,
+                             carriage: int = 0) -> bytes:
     """Construct header_aad for a Request packet.
 
     header_aad = destination (1 or 2 bytes) || flags (1 byte)
+                 || [carriage (1 byte)]
                  || [additional_dest_count (1 byte)
                      || additional_dest[] (count * addr_size bytes)]
                  || payload_length (2 bytes, big-endian)
 
-    The bracketed fields are present only when ADDITIONAL_DEST_PRESENT
+    carriage is present only when CARRIAGE_PRESENT (bit 2) is set in flags.
+    The destination-list fields are present only when ADDITIONAL_DEST_PRESENT
     (bit 4) is set in flags.
     """
     addr_size = 2 if is_16bit_addressing else 1
@@ -221,7 +235,9 @@ def build_header_aad_request(destination: int, flags: int,
         destination.to_bytes(addr_size, 'big')
         + flags.to_bytes(1, 'big')
     )
-    if flags & (1 << 4):  # ADDITIONAL_DEST_PRESENT
+    if flags & CARRIAGE_PRESENT:
+        aad += carriage.to_bytes(1, 'big')
+    if flags & ADDITIONAL_DEST_PRESENT:
         dests = additional_dests or []
         aad += len(dests).to_bytes(1, 'big')
         for ca in dests:
@@ -234,24 +250,34 @@ def build_header_aad_response(destination: int,
                                timestamp_24h_response: int,
                                flags_7bit: int,
                                payload_length: int,
-                               is_16bit_addressing: bool) -> bytes:
+                               is_16bit_addressing: bool,
+                               carriage: int = 0) -> bytes:
     """Construct header_aad for a Response packet.
 
     header_aad = destination (1 or 2 bytes)
                  || payload_length (2 bytes, big-endian)
                  || timestamp_24h_response (17 bits) + flags (7 bits)
                     packed into 3 bytes
+                 || [carriage (1 byte)]
 
-    Fields are concatenated in wire order per Section 5.4.
+    destination, payload_length and the packed bytes are concatenated in
+    wire order per Section 5.4. carriage is present only when
+    CARRIAGE_PRESENT (bit 2 of the 7-bit flags) is set. The 7 flag bits end
+    the packed 3 bytes, so carriage follows the packed bytes directly here,
+    as it follows flags in every class; on the wire it sits among the
+    optional fields (Section 5.7.5).
     """
     addr_size = 2 if is_16bit_addressing else 1
     # Pack timestamp_24h_response (17 bits) and flags (7 bits) into 3 bytes
     packed_ts_flags = (timestamp_24h_response << 7) | (flags_7bit & 0x7F)
-    return (
+    aad = (
         destination.to_bytes(addr_size, 'big')
         + payload_length.to_bytes(2, 'big')
         + packed_ts_flags.to_bytes(3, 'big')
     )
+    if flags_7bit & CARRIAGE_PRESENT:
+        aad += carriage.to_bytes(1, 'big')
+    return aad
 
 
 def build_header_aad(message_type_id: int, flags: int,
@@ -259,7 +285,8 @@ def build_header_aad(message_type_id: int, flags: int,
                      is_16bit_addressing: bool,
                      destination: int = 0,
                      timestamp_24h_response: int = 0,
-                     additional_dests: list[int] | None = None) -> bytes:
+                     additional_dests: list[int] | None = None,
+                     carriage: int = 0) -> bytes:
     """Construct header_aad for any packet class.
 
     Args:
@@ -270,19 +297,21 @@ def build_header_aad(message_type_id: int, flags: int,
         destination: Destination address (Request/Response only).
         timestamp_24h_response: Response timestamp (Response only).
         additional_dests: Additional destination CAs (group Requests only).
+        carriage: The carriage byte; included only when CARRIAGE_PRESENT
+            (bit 2) is set in flags.
     """
     packet_class = get_packet_class(message_type_id)
     if packet_class in ("status", "event"):
-        return build_header_aad_status(flags, payload_length)
+        return build_header_aad_status(flags, payload_length, carriage)
     elif packet_class == "request":
         return build_header_aad_request(
             destination, flags, payload_length, is_16bit_addressing,
-            additional_dests
+            additional_dests, carriage
         )
     else:
         return build_header_aad_response(
             destination, timestamp_24h_response, flags,
-            payload_length, is_16bit_addressing
+            payload_length, is_16bit_addressing, carriage
         )
 
 

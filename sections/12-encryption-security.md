@@ -348,7 +348,7 @@ When a node bridges traffic between modalities with different DataLink-layer enc
 
 No re-encryption, tag stripping, or modality-aware crypto logic is required.
 
-**A bridge with the PSK may re-encode.** A bridge that holds the PSK and the type's definition compresses a message it puts onto a compressed link ([Section 9.11.5](#9115-re-encoding-at-relays)): it verifies the received tag, decrypts, encodes the compressed form, encrypts it under the current epoch with the key of [Section 12.7](#127-payload-form-keys), and computes a new tag. A later revision also lets such a bridge degrade relayed Status messages. A bridge that re-encodes therefore reads the payloads it relays; it is inside the deployment's trust domain ([Section 12.6.2](#1262-what-this-model-does-not-provide)). It never produces the plain form from a compressed one.
+**A bridge with the PSK may re-encode.** A bridge that holds the PSK and the type's definition compresses a message it puts onto a compressed link ([Section 9.11.5](#9115-re-encoding-at-relays)): it verifies the received tag, decrypts, encodes the compressed form, encrypts it under the current epoch with the key of [Section 12.7](#127-payload-form-keys), and computes a new tag. Such a bridge may also build degraded rungs of a degradable message it relays ([Section 9.11.5](#9115-re-encoding-at-relays)). A bridge that re-encodes therefore reads the payloads it relays; it is inside the deployment's trust domain ([Section 12.6.2](#1262-what-this-model-does-not-provide)). It never produces the plain form from a compressed one. <!-- PSFI-3515 (per-link compression) relay degradation permitted in this revision (D8); drafted by a Claude agent. -->
 
 **A bridge without a type's identity** ([Section 12.7.2](#1272-type-identity)) forwards that type's compressed packets as received. On an encrypted network it cannot re-fragment them when they are tagged, because each new fragment needs a tag keyed by the type identity. It still re-fragments plain packets when it holds the PSK.
 
@@ -360,9 +360,11 @@ The M4P payload cipher uses the deployment PSK (see [Section 2.4.2](#242-require
 
 All nodes that host clients producing or consuming messages MUST use the same PSK. Relay-only nodes (no hosted clients) do not need the PSK and forward ciphertext as opaque bytes. A node with a compressed link SHOULD hold the PSK and the message catalog so that it can compress what it relays ([Section 9.11.5](#9115-re-encoding-at-relays), [Appendix C.3](#c3-payload-forms-and-catalogs)). Every node that holds the PSK can read every payload it relays.
 
-**Epoch keys.** A deployment that uses the payload cipher MUST treat the provisioned PSK as a **master key** from which short-lived **epoch keys** are derived using a key derivation function (KDF), and MUST rotate them on a time-based schedule that meets [Section 12.7.6](#1276-epoch-rotation-requirement).
+**Epoch keys.** A deployment that uses the payload cipher MUST treat the provisioned PSK as a **master key** from which short-lived **epoch keys** are derived, and MUST rotate them on a time-based schedule that meets [Section 12.7.6](#1276-epoch-rotation-requirement).
 
-**[GUIDANCE] Epoch key derivation.** A RECOMMENDED approach:
+<!-- PSFI-3515 (per-link compression) epoch key derivation made normative; drafted by a Claude agent. -->
+
+**Epoch key derivation.** Every node MUST derive epoch keys as follows, so that all nodes derive the same key for the same epoch:
 
 ```text
 epoch_key = HKDF-Expand(
@@ -370,9 +372,17 @@ epoch_key = HKDF-Expand(
     info   = "M4P-epoch" || network_id || epoch_number,
     L      = 32  (AES-256 key length)
 )
+
+epoch_number = floor(unix_seconds / P)
 ```
 
-`epoch_number` is a monotonically increasing epoch identifier (for example from UTC hours, mission phase, or a deployment schedule). The derived epoch key is used as `payload_cipher_key` for that epoch and avoids nonce reuse across epoch boundaries (see [Section 12.2.2](#1222-nonce-derivation), *24-hour wrap behavior*). This assumes the master PSK is uniformly random 256-bit key material; if it comes from a passphrase or other low-entropy source, implementations SHOULD apply HKDF-Extract first (RFC 5869) before HKDF-Expand.
+- **HKDF** is HKDF-Expand ([RFC5869]) with SHA-256, as for the payload form keys ([Section 12.7.1](#1271-key-derivation)). `PRK` is the master PSK itself; nodes do not apply HKDF-Extract.
+- **`"M4P-epoch"`** is the 9-octet ASCII string `M4P-epoch`.
+- **`network_id`** is the deployment's `network_id` ([Section 2.4.2](#242-required-configuration-must)) as its UTF-8 bytes, with no length prefix or terminator.
+- **`epoch_number`** is an unsigned 64-bit integer encoded as 8 big-endian octets.
+- **`unix_seconds`** is the current time in whole seconds since 1970-01-01T00:00:00Z, and **`P`** is the rotation period in seconds.
+
+The derived epoch key is the active payload cipher key for that epoch and avoids nonce reuse across epoch boundaries (see [Section 12.2.2](#1222-nonce-derivation), *24-hour wrap behavior*). This assumes the master PSK is uniformly random 256-bit key material. If it comes from a passphrase or other low-entropy source, the deployment SHOULD derive the 32-octet master PSK from it with HKDF-Extract ([RFC5869]) before provisioning, so that every node holds the same master PSK.
 
 A deployment that uses the master PSK directly, without epoch rotation, does not meet [Section 12.7.6](#1276-epoch-rotation-requirement) and reuses keystream across the 24-hour wrap described in [Section 12.2.2](#1222-nonce-derivation), *24-hour wrap behavior*.
 
@@ -469,7 +479,7 @@ compressed_key = HKDF-Expand(
 
 **One ciphertext per form and length.** The sender encrypts the whole payload of one form and length once, with the nonce at `fragment_offset = 0` and that form's key, and every fragment is a byte slice of that ciphertext ([Section 12.2.5](#1225-fragmentation-interaction)). A receiver derives the compressed key after reassembly, when the total length is known. A node that holds the PSK and the type identity can therefore re-slice a received compressed ciphertext without decrypting it.
 
-**HKDF-SHA-256 is pinned.** Payload form keys MUST use HKDF ([RFC5869]) with SHA-256. Every node derives these keys independently from cleartext header fields with no negotiation, so the construction is fixed network-wide. The KDF and hash latitude of epoch key derivation ([Section 12.4.1](#1241-payload-cipher-key)) does not extend to payload form keys.
+**HKDF-SHA-256 is pinned.** Payload form keys MUST use HKDF ([RFC5869]) with SHA-256. Every node derives these keys independently from cleartext header fields with no negotiation, so the construction is fixed network-wide. Epoch key derivation ([Section 12.4.1](#1241-payload-cipher-key)) is fixed the same way. <!-- PSFI-3515 (per-link compression) sentence updated with the normative epoch derivation; drafted by a Claude agent. -->
 
 **PRK provenance.** `PRK` is the active payload cipher key: the epoch key of the epoch in use when epoch rotation is configured ([Section 12.4.1](#1241-payload-cipher-key)), or the master PSK when it is not. A node encrypts under the current epoch at send time ([Section 12.7.6](#1276-epoch-rotation-requirement)).
 
@@ -488,9 +498,11 @@ type_identity = SHA-256(
     compressed_encoding_version   uint32, big-endian)
 ```
 
-- **`fingerprint`** is the per-type DCCL fingerprint computed by the M4P reference codec (`dccl-rs`, `MessageFingerprint`). It covers what determines the full compressed encoding: field numbers, types and order, DCCL bounds and codec options, the DCCL message id, and the same for every nested message. Names, comments, `max_bytes`, transport priority, TTL and routing or retention annotations do not affect it.
-- **The drop order** lists every field that carries a retention priority ([Section 9.11.2](#9112-degraded-rungs)) and is reachable from the message through singular message fields: never through repeated or map fields, and never into a message type already on the path from the root. It is listed in ladder order: ascending retention priority, ties broken by the root-to-leaf field-number path. Field paths are field numbers, so renaming a field does not change the identity.
-- **`compressed_encoding_version`** identifies the implementation of [Section 9.11.1](#9111-compressed-encoding) and [Section 9.11.2](#9112-degraded-rungs). An implementation MUST change it whenever a change to its encoder or ladder would change any compressed bytes it produces.
+<!-- PSFI-3515 (per-link compression) fingerprint and compressed_encoding_version made implementable from the text; drafted by a Claude agent. -->
+
+- **`fingerprint`** is the 32-octet per-type DCCL fingerprint that `MessageFingerprint` computes in the dccl-rs crate `dccl` 0.1.0 at commit `212b2b155e8d3eca5274e02bbff206481c6ccdaf` ([DCCL-RS]). This specification adopts that computation by normative reference: SHA-256 over a canonical walk of the type's DCCL definition. It covers what determines the full compressed encoding: field numbers, labels, types and order, DCCL bounds and codec options, the DCCL message id, and the same for every nested message. Names, comments, defaults, `max_bytes`, transport priority, TTL and routing or retention annotations do not affect it. A self-contained definition of the fingerprint is forthcoming in an appendix.
+- **The drop order** lists every field that carries a retention priority ([Section 9.11.2](#9112-degraded-rungs)) and is reachable from the message through singular message fields: never through repeated or map fields, and never into a message type already on the path from the root. It is listed in the ladder order of [Section 9.11.2](#9112-degraded-rungs): ascending retention priority, ties broken by lexicographic comparison of root-to-leaf field-number paths. Field paths are field numbers, so renaming a field does not change the identity.
+- **`compressed_encoding_version`** is assigned by this specification; an implementation does not choose it. Value `1` identifies the compressed encoding of [Section 9.11.1](#9111-compressed-encoding) and the ladder of [Section 9.11.2](#9112-degraded-rungs) as this revision defines them, with the DCCL encoding of DCCL 5.0.0 ([DCCL]), the version the reference codec uses. An implementation whose encoder or ladder produces different bytes for any message does not conform to this revision, and choosing another value does not make it conform. A later revision that changes the compressed encoding or the ladder assigns a new value. The test vectors of [Appendix D](#appendix-d-test-vectors-forthcoming) pin version 1.
 
 Two nodes that compute the same type identity for a type produce byte-identical compressed forms of the same message ([Section 9.11.2](#9112-degraded-rungs)). A type with no DCCL definition has no type identity and only the plain form.
 
@@ -510,7 +522,7 @@ compressed_tag_key = HKDF-Expand(
 - Any node that holds the PSK can verify, re-tag and re-fragment a plain packet, whatever its message catalog.
 - Verifying, re-tagging or re-fragmenting a compressed packet also requires the type identity. A node without it MUST treat the tag of a compressed packet as unverifiable: it forwards the packet as received, and MUST NOT re-tag or re-fragment it.
 - A compressed packet made under a different type identity fails the tag.
-- A node MUST compute a new tag for a message it did not originate, re-encoded or re-sliced, only after that message's inbound tag verified. A node MUST NOT give an unverified packet a valid tag.
+- A node MUST NOT compute a new tag for a message it did not originate, re-encoded or re-sliced, unless that message's inbound tag verified. A node MUST NOT give an unverified packet a valid tag. <!-- PSFI-3515 (per-link compression) requirement rephrased; drafted by a Claude agent. -->
 - A node that would deliver a message MUST discard a copy whose tag fails. That copy is neither stored nor delivered, and it does not suppress a later copy ([Section 6.5](#65-deduplication-rules)).
 
 #### 12.7.4 Shared Nonce and Counter Discipline {#1274-shared-nonce-and-counter-discipline}
@@ -539,7 +551,7 @@ The carriage byte is part of `header_aad`, so `PLAIN` cannot be flipped without 
 
 #### 12.7.6 Epoch Rotation Requirement {#1276-epoch-rotation-requirement}
 
-Every node that encodes a payload form encrypts it under the current epoch at send time: the origin and re-encoding relays alike, including for a message held until late in its TTL. The nonce's `timestamp_24h` is the message's origin time and repeats every 24 hours ([Section 12.2.2](#1222-nonce-derivation)). A message held for its TTL and re-encrypted at the end of it, and another message created 24 hours after the first with the same nonce inputs, are encrypted at most 24 hours minus the TTL apart. They must not fall in one epoch.
+Every node that encodes a payload form encrypts it under the current epoch at send time: the origin and re-encoding relays alike, including for a message held until late in its TTL. The nonce's `timestamp_24h` is the message's origin time and repeats every 24 hours ([Section 12.2.2](#1222-nonce-derivation)). A message held for its TTL and re-encrypted at the end of it, and another message created 24 hours after the first with the same nonce inputs, are encrypted as little as 24 hours minus the TTL apart. They must not fall in one epoch.
 
 A deployment that enables the payload cipher MUST therefore use time-based epoch rotation ([Section 12.4.1](#1241-payload-cipher-key), [Section 12.4.3](#1243-key-rotation)) with a period *P* such that *P* plus the maximum encodable TTL (26,760 s, about 7.4 hours; [Section 5.7.6](#576-optional-field-definitions)) is less than 24 hours: at most 16 hours. A 12-hour period is RECOMMENDED. Timing jitter does not replace epoch rotation, because every form of a message shares its nonce. An implementation SHOULD warn when it is configured with the payload cipher and a period above this bound, and SHOULD NOT refuse to run because of it.
 

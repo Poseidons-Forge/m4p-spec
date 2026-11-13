@@ -18,8 +18,8 @@ including commercial, under the following terms:
 |---|---|
 | **Address Contention Window** | A timeout period during the address claim lifecycle ([Section 11.4.1](#1141-confirmation-paths)). If no ACK is received within this window, the claim auto-confirms. Distinct from the TDMA contention window. |
 | **AUTH_TAG_SIZE** | A 2-bit flag field (bits [7:6] for Status/Event/Request, bits [6:5] for Response) that controls the presence and size of the AES-CMAC authentication tag: `00` = no tag, `01` = 4 bytes, `10` = 8 bytes, `11` = 16 bytes. See [Section 12.2.3](#1223-authentication-tag) for details. |
-| **Carriage** | An optional header byte, present when `CARRIAGE_PRESENT` is set, that follows `flags`. Bits 0-4 are the modality mask; bit 5 (`PLAIN`) marks the plain payload form. See [Section 5.7.6](#576-optional-field-definitions). |
 | **Broadcast** | A packet with `destination = 0`, intended for all reachable nodes and clients. |
+| **Carriage** | An optional header byte, present when `CARRIAGE_PRESENT` is set. On the wire it is the third optional field, after the fragment fields and `priority_override` ([Section 5.7.5](#575-optional-field-ordering)); in `header_aad` it follows `flags` directly ([Section 12.2.3](#1223-authentication-tag)). Bits 0-4 are the modality mask; bit 5 (`PLAIN`) marks the plain payload form. See [Section 5.7.6](#576-optional-field-definitions). |
 | **Client** | An application-layer endpoint that originates or consumes Messages. Identified globally by a ClientUID and locally by a Client Address (CA). |
 | **Client Address (CA)** | An 8-bit or 16-bit local address identifying a client endpoint on the wire. Appears in the `source` and `destination` fields of packet headers. |
 | **ClientUID** | A globally unique, persistent string identifying a specific client instance. Does not appear in transport layer packet headers. |
@@ -49,10 +49,10 @@ including commercial, under the following terms:
 | **Store-carry-forward (SCF)** | The delay-tolerant forwarding model where nodes store packets locally and forward them opportunistically when link opportunities arise. |
 | **TDMA Contention Window** | A time region at the start of each TDMA cycle where nodes without assigned slots may transmit using random access. Distinct from the address contention window. See [Section 11.10.3](#11103-cycle-geometry). |
 | **TDMA Cycle** | A fixed-length time period aligned to an epoch (0 UTC), containing an optional TDMA contention window followed by TDMA slot time. See [Section 11.10.3](#11103-cycle-geometry). |
-| **Type Identity** | A SHA-256 digest of a message type's DCCL fingerprint, its field drop order and the compressed-encoding version. Two nodes agree on a type's compressed bits exactly when its type identity matches. See [Section 12.7.2](#1272-type-identity). |
 | **Transmission** | One send operation on a specific data link modality, carrying one or more serialized Packets plus transmission metadata. |
 | **TTL (Time-to-Live)** | The maximum duration a packet remains valid in the network. Expired packets are discarded and not forwarded. |
+| **Type Identity** | A SHA-256 digest of a message type's DCCL fingerprint, its field drop order and the compressed-encoding version. Two nodes whose type identities for a type are equal produce identical compressed bytes for the same message. See [Section 12.7.2](#1272-type-identity). |
 
-<!-- PSFI-3515 (per-link compression) glossary entries (Carriage, Compressed Form, Degraded Rung, Plain Form, Retention Priority, Type Identity) drafted by a Claude agent. -->
+<!-- PSFI-3515 (per-link compression) glossary entries (Carriage, Compressed Form, Degraded Rung, Plain Form, Retention Priority, Type Identity) drafted by a Claude agent; Carriage and Type Identity corrected in review. -->
 
 ---
