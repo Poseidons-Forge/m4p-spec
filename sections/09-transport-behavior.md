@@ -348,7 +348,7 @@ When a DataLink signals a transmission opportunity with an available payload bud
 1. Discarding any expired packets from the message store.
 2. Identifying records eligible for transmission on that DataLink adapter under the common hard
    filters, spacing ladder, and novelty admission floor.
-3. Selecting and packing packets into the Transmission according to the priority and scheduling rules defined in [Section 9.4](#94-priority-and-scheduling) through [Section 9.6](#96-scheduling-modes). If a candidate packet exceeds the remaining transmission budget but is eligible for fragmentation (see [Section 8.3](#83-fragmentation-behavior)), the node MAY fragment it and pack as many resulting fragments as fit. Fragmentation eligibility depends on the authentication configuration: when `AUTH_TAG_SIZE == 00`, any complete message or received fragment may be fragmented or re-fragmented; when `AUTH_TAG_SIZE != 00`, only nodes possessing the PSK may fragment or re-fragment ([Section 8.3.5](#835-encryption-interaction)). See [Section 9.7.1](#971-fragment-size-selection) for fragment size guidance.
+3. Selecting and packing packets into the Transmission according to the priority and scheduling rules defined in [Section 9.4](#94-priority-and-scheduling) through [Section 9.6](#96-scheduling-modes). If a candidate packet exceeds the remaining transmission budget but is eligible for fragmentation (see [Section 8.3](#83-fragmentation-behavior)), the node MAY fragment it and pack as many resulting fragments as fit. Fragmentation eligibility depends on the payload form and the authentication configuration: a degraded rung is never fragmented, nor is a compressed Status received unfragmented that the node does not know to be the full compressed form ([Section 8.3.2](#832-who-may-fragment)); otherwise, when `AUTH_TAG_SIZE == 00`, any complete message or received fragment may be fragmented or re-fragmented, and when `AUTH_TAG_SIZE != 00`, only nodes possessing the PSK may fragment or re-fragment ([Section 8.3.5](#835-encryption-interaction)). See [Section 9.7.1](#971-fragment-size-selection) for fragment size guidance. <!-- PSFI-3515 (per-link compression) degraded rungs excluded from fragmentation (D15), and unmarked rungs (D16); drafted by a Claude agent. -->
 4. Transmitting via the DataLink.
 5. On successful send confirmation, updating per-DataLink-adapter send state and peer-holding
    estimates for all transmitted records.
@@ -543,6 +543,9 @@ The following protocol-intrinsic properties enforce version-lock — a change to
 - **Address derivation algorithm.** The hash function and PRIME_STEP constant ([Section 11.1](#111-address-derivation-and-versioning)) are fixed per version.
 - **CTE encoding.** The Compact Type Encoding scheme ([Section 4.2](#42-compact-type-encoding-cte)) reserves values 32,768+ for future extended encoding that current parsers cannot decode.
 - **Cryptographic primitives.** The payload cipher (AES-256-CTR) and authentication (AES-CMAC) are fixed per version.
+- **Key derivation.** The HKDF-SHA-256 derivations of epoch keys ([Section 12.4.1](#1241-payload-cipher-key)) and of the payload form keys and tag keys ([Section 12.7](#127-payload-form-keys)) are fixed per version.
+- **Type identity.** The type identity construction and the `compressed_encoding_version` value ([Section 12.7.2](#1272-type-identity)) are fixed per version.
+<!-- PSFI-3515 (per-link compression) key derivation and type identity items drafted by a Claude agent. -->
 
 ### 9.10 Knowledge-Driven Scheduling {#910-knowledge-driven-scheduling}
 
@@ -597,5 +600,82 @@ The following guidance keeps the estimator conservative:
   model as application records.
 - Selection remains deterministic for fixed state and opportunities; model uncertainty does not
   require random inclusion.
+
+### 9.11 Payload Forms {#911-payload-forms}
+
+<!-- PSFI-3515 (per-link compression) section drafted by a Claude agent. -->
+
+An application payload is carried in one of two forms, and each DataLink adapter declares which form its link carries ([Section 10](#10-datalink-abstraction)). Fast links carry the plain form; links that need compression, such as acoustic and satellite, carry the compressed form. A message is one message whichever form a copy has: sending either form counts as sending it, and holding either form counts as holding it.
+
+- **Plain form.** The protobuf bytes the origin's client submitted, carried unchanged. Only the origin produces it. No node expands a compressed form back into the plain form, because that would present lost precision as the original.
+- **Compressed form.** The full compressed encoding ([Section 9.11.1](#9111-compressed-encoding)) or, for a degradable type, one of its degraded rungs ([Section 9.11.2](#9112-degraded-rungs)). Any node that holds a form of the message, the type's DCCL definition and, when the payload cipher is in use, the PSK can produce it, under the conditions of [Section 9.11.5](#9115-re-encoding-at-relays).
+- **Plain-only types.** A DCCL definition is optional per type and only makes the type smaller on links that compress. A type with no definition has only the plain form. The modality mask of the carriage byte ([Section 5.7.6](#576-optional-field-definitions)) is the only restriction on which links a message may use, so a plain-only type may use every link its mask permits.
+- **Fidelity order.** Degraded rungs rank below the full compressed form, shorter rungs lower. The full compressed form and the plain form rank equal and highest.
+
+The `PLAIN` bit of the carriage byte marks a packet carrying the plain form; a packet without it carries the compressed form. Each form has its own encryption keys ([Section 12.7](#127-payload-form-keys)).
+
+#### 9.11.1 Compressed Encoding {#9111-compressed-encoding}
+
+The full compressed form of a message is its DCCL encoding ([DCCL]) under the type's DCCL definition. The DCCL message id of the definition MUST equal the type's `message_type_id`; the packet header names the type, so the encoding need not carry the id. A receiver decodes a compressed payload with the definition of the type named by `message_type_id`. Compressed bytes carry no field names or numbers, so a receiver whose definition differs from the sender's decodes wrong values. On a network that uses the payload cipher, the type identity in the compressed keys rejects such a copy before decoding ([Section 12.7.3](#1273-tag-keys)).
+
+#### 9.11.2 Degraded Rungs {#9112-degraded-rungs}
+
+A field MAY carry a **retention priority** from 0 to 255 (`(m4p.field).retention_priority`); 0 is dropped first. Only a field that appears on the wire and can be absent (a field with presence, or a repeated field) MAY carry one. A Status type is **degradable** when it, or a message it embeds through a singular field, has such a field. Only Status messages are degraded: their supersession semantics make a shorter current value useful, while a shortened Event, Request or Response would deliver a different fact or command. A retention priority has no effect on messages of other classes. <!-- PSFI-3515 (per-link compression) degradation limited to Status, as in the design; drafted by a Claude agent. -->
+
+<!-- PSFI-3515 (per-link compression) ladder tie-break and starting form made exact; drafted by a Claude agent. -->
+The ladder can be built from any form of the message the node holds: the plain form, the full compressed form or a degraded rung. A node builds it from the highest-ranked form it holds, which is the form its record stores ([Section 9.11.6](#9116-stored-form-and-delivery)), because a ladder built from a degraded rung yields only the rungs below that rung. The rungs are built as follows:
+
+1. Decode the form into a message.
+2. List the droppable fields: every present field that carries a retention priority, reached from the root through present singular message fields (never through repeated or map fields), in **ladder order**: ascending retention priority, with ties broken by comparing the fields' root-to-leaf field-number paths lexicographically. Two paths compare at the first position where their field numbers differ, the smaller number first; when one path is a prefix of the other, the shorter path comes first.
+3. Take as the last kept result the compressed form the ladder starts from: the full compressed form when the ladder is built from the plain form or the full compressed form, or the degraded rung it is built from. Then, for each listed field in order: clear it, keeping every earlier clear, and re-encode. Keep the result as the next rung only if it is strictly shorter than the last kept result.
+
+Every node MUST produce byte-identical full forms and rungs for one message under one type identity ([Section 12.7.2](#1272-type-identity)), and MUST use this algorithm. The DCCL definition of a degradable type MUST be stable under decode-then-encode, so that the ladder built from any rung reproduces the same lower rungs.
+
+A degraded rung always travels in one frame and is never fragmented ([Section 8.3.2](#832-who-may-fragment)). A sender sends the best compressed form that fits whole in one frame of the link, whether the full compressed form or a rung. When none fits, it fragments the full compressed form instead or does not send the message on that link for now ([Section 9.11.3](#9113-form-selection-per-link)). <!-- PSFI-3515 (per-link compression) rungs never fragmented (D15); drafted by a Claude agent. -->
+
+#### 9.11.3 Form Selection per Link {#9113-form-selection-per-link}
+
+For a stored message on link *L*, a node sends:
+
+- **When *L* carries the plain form:** the plain form if it holds it, otherwise the compressed form it holds.
+- **When *L* carries the compressed form and the node may produce compressed forms of the message:** the best compressed form that fits whole in one frame of *L*. A node may produce compressed forms when it has the type's DCCL definition and may re-encode the form it holds ([Section 9.11.5](#9115-re-encoding-at-relays)): when the payload cipher is in use, it holds the PSK and a copy it did not originate carries a tag that verified. When no compressed form fits in one frame, the node MAY send fragments of the full compressed form instead, if it holds the plain form or knows it holds the full compressed form ([Section 8.3.2](#832-who-may-fragment)); otherwise it does not send the message on *L* for now.
+- **When *L* carries the compressed form and the node may not produce compressed forms of the message, or encoding failed:** the form it holds. This covers a node with no definition for the type, a node without the PSK, and, when the payload cipher is in use, a foreign copy that carries no tag or whose tag did not verify. A plain copy on a compressed link carries the carriage byte and so costs one byte more. An implementation SHOULD count the plain copies it sends onto compressed links per message type and link. It SHOULD emit an engineering event for the first such send per message type and link, and for each encode failure.
+<!-- PSFI-3515 (per-link compression) re-encoding preconditions added to form selection, untagged copies per D14; fragmenting the full compressed form when no rung fits (D15); plain-send count and engineering event (D3 r8); knows-it-holds pointer (D16); drafted by a Claude agent. -->
+
+A degraded rung is sent only whole ([Section 8.3.2](#832-who-may-fragment)): a node that holds a rung sends it whole or not at all, on any link. <!-- PSFI-3515 (per-link compression) rungs travel whole (D15) drafted by a Claude agent. -->
+
+In every case the modality mask applies as in [Section 5.7.6](#576-optional-field-definitions). A node with a compressed link SHOULD produce the compressed form when it stores a message, at submit or on receipt, so that a send never waits for encoding.
+
+#### 9.11.4 Submit Validation {#9114-submit-validation}
+
+When a client submits a message of a type for which the origin has a DCCL definition, the origin MUST encode it. If encoding fails, because the bytes are not a valid message of the type or a required field is missing, the origin MUST reject the submission and send the message on no link, plain links included. A payload of a type with no DCCL definition is accepted as submitted.
+
+A value outside a limit of the DCCL definition does not make encoding fail. The compressed encoding ([Section 9.11.1](#9111-compressed-encoding)) runs with DCCL's strict checking off, as DCCL does by default: it cuts a repeated field to its maximum number of entries and a string or bytes field to its maximum length, and encodes a number outside its range as not set. The plain form keeps the value as submitted, so the two forms of such a message differ. A type whose values can exceed its DCCL limits SHOULD have its limits widened, or its DCCL definition removed if it never rides a compressed link. <!-- PSFI-3515 (per-link compression) DCCL limits not enforced (D13 r10) drafted by a Claude agent. -->
+
+#### 9.11.5 Re-encoding at Relays {#9115-re-encoding-at-relays}
+
+A relay that holds the type's DCCL definition and, when the payload cipher is in use, the PSK MAY compress a message of any class when it puts the message on a link that carries the compressed form, and MAY build degraded rungs of a degradable message it relays ([Section 9.11.2](#9112-degraded-rungs)).
+
+When the payload cipher is in use, a relay MUST NOT re-encode or degrade a copy that carries no tag (`AUTH_TAG_SIZE = 00`); it forwards that copy in the form it arrived. Without a tag the relay cannot tell whether the copy was altered in transit, and re-encoding altered contents would put a different plaintext under the same key and nonce. <!-- PSFI-3515 (per-link compression) untagged copies (D14) drafted by a Claude agent. -->
+
+To re-encode, the relay:
+
+1. When the payload cipher is in use, verifies the inbound tag ([Section 12.7.3](#1273-tag-keys)). A relay re-encodes only a copy whose tag verified.
+2. Decrypts the payload and produces the compressed form or rung.
+3. Encrypts it under the epoch of the message's origin time ([Section 12.4.1](#1241-payload-cipher-key)) with the compressed key ([Section 12.7.1](#1271-key-derivation)) and computes a new tag under the compressed tag key. <!-- PSFI-3515 (per-link compression) origin-time epoch (D12 r6) drafted by a Claude agent. -->
+
+The re-encoded packet keeps the message's identity fields, the mask bits of its carriage byte and the `AUTH_TAG_SIZE` of the copy it was made from. The relay clears `PLAIN`, removes the carriage byte when the mask permits all five modalities, and recomputes `payload_length`. A relay MUST NOT expand a compressed copy into the plain form. <!-- PSFI-3515 (per-link compression) AUTH_TAG_SIZE retention drafted by a Claude agent. -->
+
+A relay never fragments a degraded rung ([Section 8.3.2](#832-who-may-fragment)). It forwards a rung it received whole or not at all, and sends a rung it builds only whole. It also never fragments a compressed Status copy it received unfragmented unless it knows that copy is the full compressed form. When no rung it can send fits in one frame, it falls back as in [Section 9.11.3](#9113-form-selection-per-link). <!-- PSFI-3515 (per-link compression) relays never fragment a rung (D15) or an unmarked one (D16); drafted by a Claude agent. -->
+
+A relay without the PSK, or without the type's definition, forwards the form it holds without re-encoding it. A relay without the type identity forwards that type's compressed packets as received and, on a network that uses the payload cipher, cannot re-fragment them when they are tagged ([Section 12.7.3](#1273-tag-keys)).
+
+#### 9.11.6 Stored Form and Delivery {#9116-stored-form-and-delivery}
+
+- A record stores one form of its message: the best it holds. A later copy replaces the stored form only when it ranks higher in the fidelity order, or when it is the plain form and the stored copy is compressed. A copy that does not replace the stored form is a duplicate for storage ([Section 6.5](#65-deduplication-rules)) and still counts as evidence about its sender.
+- **Exception.** A node that has a link carrying the compressed form and cannot re-encode a plain copy MUST keep its stored compressed copy, so that it does not put the plain form on that link. The plain copy, whole or fragmented, then does not replace the stored copy and is not forwarded. A node cannot re-encode a plain copy when it lacks the type's DCCL definition or, when the payload cipher is in use, the PSK or a verified tag on that copy ([Section 9.11.5](#9115-re-encoding-at-relays)). Delivery follows the items below unchanged, so the node still delivers the plain copy locally when it has not delivered the message. <!-- PSFI-3515 (per-link compression) keep-compressed exception (D3 r8) drafted by a Claude agent. -->
+- A node delivers the first copy of a message to its local clients. It delivers a later copy again only when that copy upgrades a degraded rung: when the best copy delivered so far is a degraded rung and the later copy ranks higher. A longer degraded rung, the full compressed form or the plain form arriving after a shorter rung is therefore delivered again. The full compressed form followed by the plain form is not delivered again, because the two rank equal. <!-- PSFI-3515 (per-link compression) rung-to-rung redelivery made explicit; drafted by a Claude agent. -->
+- A copy whose compressed payload fails to decode is not a delivery: the node delivers a later copy of the message when one arrives.
+- Status supersession ([Section 9.2](#92-per-node-message-store)) applies across forms.
 
 ---

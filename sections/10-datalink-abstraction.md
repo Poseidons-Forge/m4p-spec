@@ -41,7 +41,7 @@ conformant; M4P then operates from receipt recency and the link descriptors.
 | Reception quality | Any declared subset of `snr_db`, `pdsnr_db`, `rssi_dbm`, and `decode_confidence` on a receipt | `evidence_capabilities`: `reception_quality` with its field list | channel-prior curve |
 | Range | A measured range to a peer | `evidence_capabilities`: `range` | range table on the self row |
 | Peer receipt | A named peer acknowledged a named send or receive opportunity | `evidence_capabilities`: `peer_receipts` | E12 through the shared opportunity table |
-| Descriptors | Modality, class, addressing, scheduling mode, MAC management, collision domain, maximum transmission duration, and endpoint set | fixed registration or descriptor fields | selection of the applicable core rules |
+| Descriptors | Modality, class, addressing, scheduling mode, MAC management, collision domain, maximum transmission duration, payload form, and endpoint set | fixed registration or descriptor fields | selection of the applicable core rules |
 | Diagnostics and decode events | Any other adapter measurement or event | free-form observability API | observability only; never evidence |
 
 An implementation MUST reject an unknown or malformed evidence capability at
@@ -61,6 +61,11 @@ The registration descriptors have these meanings:
   taking the maximum over participants; an adapter does not compute that rule.
 - The endpoint set of a unicast link is the set of endpoints the adapter can
   currently address. It is an address-table fact, never a reachability claim.
+- `payload_form` is `compressed` (the default when absent) or `plain`: the
+  payload form the link carries ([Section 9.11.3](#9113-form-selection-per-link)).
+  Fast links such as LAN and broker transports declare `plain`. It is a
+  property of the link, declared by its adapter, not derived from its modality
+  or data rate. <!-- PSFI-3515 (per-link compression) item drafted by a Claude agent. -->
 
 (Revision 2026-11-10; drafted by a Claude agent.) The `operating_envelope`
 descriptor (`surface`, `subsurface`, `both`) is removed, together with the peer
