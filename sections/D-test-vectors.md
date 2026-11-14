@@ -25,7 +25,7 @@ This appendix will provide byte-level test vectors for independent implementatio
 7. **Encryption round-trip** — Plaintext payload through nonce construction, AES-256-CTR encryption, and decryption, verifying ciphertext and recovered plaintext match.
 8. **Fragment byte-range coverage** — Coverage tracking and redundancy decisions for overlapping fragments, re-fragmented fragments, and interactions between fragmented and unfragmented copies.
 9. **Payload forms** (placeholder) — for one message type: the plain input, its full compressed form, every degraded rung, the rungs rebuilt from a middle rung ([Section 9.11.2](#9112-degraded-rungs)), and its type identity at `compressed_encoding_version` 1 with every intermediate serialization ([Section 12.7.2](#1272-type-identity)).
-10. **Payload form keys** — the plain key, the compressed key for two total lengths and two type identities, and both tag keys, with a compressed ciphertext encrypted whole, sliced into fragments, and each fragment tagged ([Section 12.7](#127-payload-form-keys)). See [Appendix D.10](#d10-payload-form-keys).
+10. **Payload form keys** — the plain key, the compressed key for two total lengths and two type identities, both tag keys, and the Response key for two requesters, with a compressed ciphertext encrypted whole, sliced into fragments, and each fragment tagged ([Section 12.7](#127-payload-form-keys)). See [Appendix D.10](#d10-payload-form-keys).
 <!-- PSFI-3515 (per-link compression) items 9 and 10, and the rewording of item 8, drafted by a Claude agent. -->
 
 Each test vector will include all intermediate values (hash digests, derived keys, nonce bytes) to enable implementers to isolate errors at each computation step.
@@ -108,6 +108,32 @@ compressed_tag_key, type identity B
   key   284a76a7b0d1cad33f4aad9969600c7a895bc89f9de279e02cf7de32b5e171dc
 ```
 
+**Response keys** ([Section 12.7.1](#1271-key-derivation), *Response key*). Two Responses from one responder to requesters `0x3c` and `0x3d`, in 8-bit addressing. Each `response_key` has `PRK` = `epoch_key` and a 14-octet `info`, and takes the place of `epoch_key` as the `PRK` of that Response's other keys. Its plain tag key is the `response_key` itself.
+
+```text
+response_key, requester 0x3c
+  info  4d34502d726573706f6e7365                                          "M4P-response"
+        003c                                                              requester_ca_be16
+  key   edf77bbb4323a1e5d178ce5153322bcc382d999bd936fcb1b04373a4501b7117
+plain_key, requester 0x3c
+  key   45e2a678518939d2cc24015efb8c8a1fc6679d8377fc55f11c90e7d5f4f288bc
+compressed_key, requester 0x3c, type identity A, total length 37
+  key   23bf8612e28d9f8d5819f3d6f2170d22d29d6fce2ce4543818a4868a05365cce
+compressed_tag_key, requester 0x3c, type identity A
+  key   bc776c983f63b3c1d094137161f0f6e074995b493b84e6bd166524eeb5ea4ea7
+
+response_key, requester 0x3d
+  info  4d34502d726573706f6e7365                                          "M4P-response"
+        003d                                                              requester_ca_be16
+  key   f0dba28f703295ee0230666ad0ff01d51fd8bdb4e9b52c18d501df369bf572b9
+plain_key, requester 0x3d
+  key   a2f123e3546c154e3164edb47505dfb5cbfafb9ca6ebae55854b0ddb1b1da402
+compressed_key, requester 0x3d, type identity A, total length 37
+  key   4b4eed7c821f6ad24cf317f6d510731c3d5ba84374dc9fa0975731687d73139f
+compressed_tag_key, requester 0x3d, type identity A
+  key   6bbdf01ebf830ae3c9d75c49fdc050f5689a672e262e12204a71ecbf78aa20f9
+```
+
 **Nonce** ([Section 12.2.2](#1222-nonce-derivation)). A Status message of type 1234 in 8-bit addressing, with `fragment_offset = 0` for whole-payload encryption.
 
 ```text
@@ -156,7 +182,7 @@ variant          offset  end  flags  header_aad      tag
 end bit cleared  26      0    c1     c10034000b      2cd7b8a1de1c184124c466017bc166ca
 with carriage    13      0    c5     c5001a03000d    a11d115a4a4202bfb45da3a6baa59a8c
 ```
-<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.2.3, 12.4.1 and 12.7; the time input is the origin time (D12 r6); fragment tags added for D15. -->
+<!-- PSFI-3515 (per-link compression) Appendix D.10 drafted by a Claude agent, with values computed independently from Sections 12.2.2, 12.2.3, 12.4.1 and 12.7; the time input is the origin time (D12 r6); fragment tags added for D15; Response keys added for D17. -->
 
 ---
 

@@ -648,7 +648,9 @@ In every case the modality mask applies as in [Section 5.7.6](#576-optional-fiel
 
 #### 9.11.4 Submit Validation {#9114-submit-validation}
 
-When a client submits a message of a type for which the origin has a DCCL definition, the origin MUST encode it. If encoding fails, because the bytes are not a valid message of the type, a required field is missing, or the message exceeds a limit of the DCCL definition such as a maximum number of repeated entries, the origin MUST reject the submission and send the message on no link, plain links included. A payload of a type with no DCCL definition is accepted as submitted.
+When a client submits a message of a type for which the origin has a DCCL definition, the origin MUST encode it. If encoding fails, because the bytes are not a valid message of the type or a required field is missing, the origin MUST reject the submission and send the message on no link, plain links included. A payload of a type with no DCCL definition is accepted as submitted.
+
+A value outside a limit of the DCCL definition does not make encoding fail. The compressed encoding ([Section 9.11.1](#9111-compressed-encoding)) runs with DCCL's strict checking off, as DCCL does by default: it cuts a repeated field to its maximum number of entries and a string or bytes field to its maximum length, and encodes a number outside its range as not set. The plain form keeps the value as submitted, so the two forms of such a message differ. A type whose values can exceed its DCCL limits SHOULD have its limits widened, or its DCCL definition removed if it never rides a compressed link. <!-- PSFI-3515 (per-link compression) DCCL limits not enforced (D13 r10) drafted by a Claude agent. -->
 
 #### 9.11.5 Re-encoding at Relays {#9115-re-encoding-at-relays}
 

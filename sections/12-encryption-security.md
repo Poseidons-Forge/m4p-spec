@@ -150,7 +150,7 @@ nonce = AES-CTR-NONCE(network_id, source_ca, timestamp_24h, msg_counter, message
 | `timestamp_24h` | `timestamp_24h_request` (the original Request's timestamp) |
 | `msg_counter` | `msg_counter_request` (the original Request's counter) |
 
-The `(source_ca, timestamp_24h_request, msg_counter_request, message_type_id)` tuple is unique because the transport enforces the one-response-per-request invariant in [Section 6.5](#65-deduplication-rules).
+The `(source_ca, timestamp_24h_request, msg_counter_request, message_type_id)` tuple is unique per requester, not across requesters. Each requester numbers its own Requests, so two requesters can send Requests with equal timestamp and counter to one responder, and the two Responses then carry the same nonce. The Response key ([Section 12.7.1](#1271-key-derivation)) binds the requester's CA, the Response's `destination`, so those Responses are encrypted under different keys. With the requester's CA in the key, one key and nonce belong to one Response, by the one-response-per-request invariant in [Section 6.5](#65-deduplication-rules). <!-- PSFI-3515 (per-link compression) Response key (D17) drafted by a Claude agent. -->
 
 **Nonce uniqueness.** Uniqueness is scoped by the tuple `(network_id_hash, source_ca, timestamp_24h, msg_counter, message_type_id, fragment_offset)`:
 
@@ -187,7 +187,7 @@ The M4P transport MAY append an authentication tag (4, 8, or 16 bytes) to encryp
 tag = TRUNCATE_N(AES-CMAC(key, nonce || header_aad || ciphertext))
 ```
 
-`key` is the packet's tag key ([Section 12.7.3](#1273-tag-keys)): the active key for a plain packet, and the compressed tag key of the message's type for a compressed packet. `nonce` is the 16-byte value from [Section 12.2.2](#1222-nonce-derivation), and `header_aad` is immutable non-encrypted header data in wire order.
+`key` is the packet's tag key ([Section 12.7.3](#1273-tag-keys)): the active key for a plain packet (for a Response, the Response key of [Section 12.7.1](#1271-key-derivation)), and the compressed tag key of the message's type for a compressed packet. `nonce` is the 16-byte value from [Section 12.2.2](#1222-nonce-derivation), and `header_aad` is immutable non-encrypted header data in wire order.
 
 **Header AAD construction.** The `header_aad` fields depend on the packet class:
 
@@ -472,7 +472,7 @@ Identity obfuscation is an application-layer responsibility. M4P does not define
 
 <!-- PSFI-3515 (per-link compression) section drafted by a Claude agent; supersedes the unmerged representation-keying section of m4p-spec PR #1. -->
 
-An application payload travels in one of two forms ([Section 9.11](#911-payload-forms)): the **plain form**, the protobuf bytes the origin's client submitted, or the **compressed form**, the type's full DCCL encoding or one of its degraded rungs. The nonce ([Section 12.2.2](#1222-nonce-derivation)) is derived only from identity header fields, so every form and every length of one message share one nonce. AES-CTR requires distinct plaintexts under one nonce to use distinct keys, otherwise they reuse keystream. This section derives one payload key for the plain form and one per type identity and total length for the compressed form, and a tag key for each form. It applies to every application payload whenever the payload cipher is active, fragmented or not.
+An application payload travels in one of two forms ([Section 9.11](#911-payload-forms)): the **plain form**, the protobuf bytes the origin's client submitted, or the **compressed form**, the type's full DCCL encoding or one of its degraded rungs. The nonce ([Section 12.2.2](#1222-nonce-derivation)) is derived only from identity header fields, so every form and every length of one message share one nonce. AES-CTR requires distinct plaintexts under one nonce to use distinct keys, otherwise they reuse keystream. This section derives one payload key for the plain form and one per type identity and total length for the compressed form, and a tag key for each form. A Response's keys also bind the requester's CA, because its nonce does not carry it. It applies to every application payload whenever the payload cipher is active, fragmented or not.
 
 #### 12.7.1 Key Derivation {#1271-key-derivation}
 
@@ -497,6 +497,19 @@ compressed_key = HKDF-Expand(
 **HKDF-SHA-256 is pinned.** Payload form keys MUST use HKDF ([RFC5869]) with SHA-256. Every node derives these keys independently from cleartext header fields with no negotiation, so the construction is fixed network-wide. Epoch key derivation ([Section 12.4.1](#1241-payload-cipher-key)) is fixed the same way. <!-- PSFI-3515 (per-link compression) sentence updated with the normative epoch derivation; drafted by a Claude agent. -->
 
 **PRK provenance.** `PRK` is the active payload cipher key: the epoch key of the epoch the message's origin time falls in when epoch rotation is configured ([Section 12.4.1](#1241-payload-cipher-key)), or the master PSK when it is not. Every node that encrypts, verifies or decrypts the message uses that same epoch ([Section 12.7.6](#1276-epoch-rotation-requirement)). <!-- PSFI-3515 (per-link compression) origin-time epochs (D12 r6) drafted by a Claude agent. -->
+
+**Response key.** A Response's nonce carries the responder's CA and the Request's timestamp and counter, but not the requester's CA ([Section 12.2.2](#1222-nonce-derivation)). For a Response, the active payload cipher key is therefore first expanded with the requester's CA:
+
+```text
+response_key = HKDF-Expand(
+    PRK  = <active payload cipher key>,
+    info = "M4P-response" || requester_ca_be16,
+    L    = 32)
+```
+
+- **`"M4P-response"`** is the 12-octet ASCII string `M4P-response`. **`requester_ca_be16`** is the Response's `destination`, the requester's CA, as two big-endian octets, zero-padded in 8-bit addressing as `source_ca` is in the nonce. The `info` string is 14 octets.
+- For a Response, `response_key` takes the place of the active payload cipher key in every derivation of this section: it is the `PRK` of the Response's payload keys and compressed tag key, and its plain tag key ([Section 12.7.3](#1273-tag-keys)). Status, Event and Request keys are derived from the active payload cipher key directly.
+- No wire bytes are added: the `destination` is in every Response header. <!-- PSFI-3515 (per-link compression) Response key (D17) drafted by a Claude agent. -->
 
 #### 12.7.2 Type Identity {#1272-type-identity}
 
@@ -555,6 +568,8 @@ A receiver selects both keys from the authenticated header ([Section 12.2.3](#12
 
 ```text
 active key = epoch key of the message's origin time (Section 12.4.1)
+if the packet is a Response:
+    active key = response_key(active key, destination)   (Section 12.7.1)
 
 if the carriage byte is present and PLAIN is set:
     tag key     = plain_tag_key
