@@ -294,6 +294,8 @@ When multiple optional fields are present, they MUST appear in the following ord
 | `ca_fingerprint` | `CA_FINGERPRINT_PRESENT` | 16 bits | `SHA-256(ClientUID \|\| CA \|\| address_version)` truncated to 2 bytes. |
 | `authentication_tag` | `AUTH_TAG_SIZE != 00` | 4/8/16 bytes | Truncated AES-CMAC tag for integrity and authentication. |
 
+A forwarding node keeps `priority_override` and `ttl_override` exactly as the origin authored them, present or absent, and never substitutes its own per-type defaults: both fields are part of the authenticated header ([Section 12.2.3](#1223-authentication-tag)), and only the origin knows why it set them. <!-- PSFI-3680 (undeliverable-request reply) drafted by a Claude agent. -->
+
 ##### Fragment Fields
 
 Present when `IS_FRAGMENT` is set. The two sub-fields (`offset` and `end`) occupy 16 bits (2 bytes) total. See [Section 8](#8-fragmentation-and-reassembly) for full fragmentation semantics.

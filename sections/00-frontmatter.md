@@ -137,6 +137,7 @@ including commercial, under the following terms:
     - [9.11.4 Submit Validation](#9114-submit-validation)
     - [9.11.5 Re-encoding at Relays](#9115-re-encoding-at-relays)
     - [9.11.6 Stored Form and Delivery](#9116-stored-form-and-delivery)
+  - [9.12 Undeliverable Requests](#912-undeliverable-requests)
 - [10. DataLink Abstraction](#10-datalink-abstraction)
   - [10.1 DataLink Interface](#101-datalink-interface)
   - [10.2 Modality Classification](#102-modality-classification)
