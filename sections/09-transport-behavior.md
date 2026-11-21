@@ -238,6 +238,14 @@ A Request becomes terminal when every destination CA has a matching Response. A 
 terminal when confirmed evidence shows that the requester's host holds it. Until those conditions
 or TTL expiry, both classes remain ordinary novelty-governed candidates.
 
+**Requester's wait.** A requester's node SHOULD stop waiting for the Responses to a Request only
+once the Request's effective TTL and then the default TTL of its Response type
+(`request_type + 1`, [Section 4.1](#41-message-type-id-ranges)) have passed since the Request was
+sent. The first is the window in which a destination may accept the Request; the second is the
+time its Response has to come back. A node that stopped at the Request's TTL alone would report
+as unanswered a Request that a destination accepted near the end of that window. A Response that
+arrives after the requester stopped waiting is still delivered. <!-- PSFI-3679 (command expiry) drafted by a Claude agent. -->
+
 A Request is always sent as itself, under novelty and the spacing ladder, on every link its
 modality mask allows; no other record stands in for it. The originator's own re-send of the
 Request is its only "still waiting" signal: a node that holds a Response to the Request and hears
@@ -675,7 +683,29 @@ A relay without the PSK, or without the type's definition, forwards the form it 
 - A record stores one form of its message: the best it holds. A later copy replaces the stored form only when it ranks higher in the fidelity order, or when it is the plain form and the stored copy is compressed. A copy that does not replace the stored form is a duplicate for storage ([Section 6.5](#65-deduplication-rules)) and still counts as evidence about its sender.
 - **Exception.** A node that has a link carrying the compressed form and cannot re-encode a plain copy MUST keep its stored compressed copy, so that it does not put the plain form on that link. The plain copy, whole or fragmented, then does not replace the stored copy and is not forwarded. A node cannot re-encode a plain copy when it lacks the type's DCCL definition or, when the payload cipher is in use, the PSK or a verified tag on that copy ([Section 9.11.5](#9115-re-encoding-at-relays)). Delivery follows the items below unchanged, so the node still delivers the plain copy locally when it has not delivered the message. <!-- PSFI-3515 (per-link compression) keep-compressed exception (D3 r8) drafted by a Claude agent. -->
 - A node delivers the first copy of a message to its local clients. It delivers a later copy again only when that copy upgrades a degraded rung: when the best copy delivered so far is a degraded rung and the later copy ranks higher. A longer degraded rung, the full compressed form or the plain form arriving after a shorter rung is therefore delivered again. The full compressed form followed by the plain form is not delivered again, because the two rank equal. <!-- PSFI-3515 (per-link compression) rung-to-rung redelivery made explicit; drafted by a Claude agent. -->
-- A copy whose compressed payload fails to decode is not a delivery: the node delivers a later copy of the message when one arrives.
+- A copy whose compressed payload fails to decode is not a delivery: the node delivers a later copy of the message when one arrives. For a Request, the node also answers the requester ([Section 9.12](#912-undeliverable-requests)).
 - Status supersession ([Section 9.2](#92-per-node-message-store)) applies across forms.
+
+### 9.12 Undeliverable Requests {#912-undeliverable-requests}
+**[WIRE FORMAT + BEHAVIORAL]**
+
+<!-- PSFI-3680 (undeliverable-request reply) drafted by a Claude agent. -->
+A node that cannot hand a Request to its destination client answers the requester itself, so the requester learns at once instead of waiting out the Request's TTL. The answer is a Response of the generic type `10,000` ([Section 4.1](#41-message-type-id-ranges)).
+
+**Who sends it.** Only the node that hosts the destination client, and only when the Request's compressed payload fails to decode as that node delivers the Request to the client ([Section 9.11.6](#9116-stored-form-and-delivery)). A relay never decodes a Request for delivery, so it never sends one. A relay whose re-encoding of a copy fails sends the form it holds ([Section 9.11.3](#9113-form-selection-per-link)) and nothing back. A node whose decoder is unavailable altogether, rather than failing on this payload, sends nothing: the Request is not known to be at fault.
+
+**Wire form.** An ordinary Response ([Section 5.4](#54-response-packet-header)):
+
+- `source` is the CA of the destination client the Request could not reach. `destination`, `timestamp_24h_request` and `msg_counter_request` are copied from the Request, as for any Response ([Section 6.3](#63-response-correlation)), so the answer routes back to the requester like any Response.
+- `payload` is one octet, the reason. `1` means **payload undecodable**: the Request's compressed payload did not decode against the receiving node's definition of its type. No other value is defined in this version. A requester treats an unknown value as an undeliverable Request whose reason it does not know.
+- `priority_override` and `ttl_override` carry the sending node's default priority and TTL for the Request's own Response type (`request_type + 1`), and the carriage byte carries that type's modality mask, because a forwarding node cannot infer them from type `10,000`. The payload travels in the plain form, so the carriage byte is always present ([Section 5.7.6](#576-optional-field-definitions)).
+
+**Once per Request and destination.** A node sends at most one generic Response per `(request_MIID, source_CA)`. A later undecodable copy of the same Request sends nothing new. A later copy that does decode is still delivered ([Section 9.11.6](#9116-stored-form-and-delivery)), and the destination client's own Response follows. The two Responses differ in `message_type_id`, so they have different deduplication keys ([Section 6.5](#65-deduplication-rules)) and different nonces ([Section 12.2.2](#1222-nonce-derivation)).
+
+**Clients never submit it.** The transport MUST reject a client's submission of a Response of type `10,000`. Only the transport originates one, which keeps the one-response-per-request invariant of [Section 6.5](#65-deduplication-rules).
+
+**At the requester.** A generic Response is its destination's answer: it counts toward the Request becoming terminal ([Section 9.3.2](#932-request-and-response-termination)). The requester's node reports the failure and its reason to the client that sent the Request, instead of delivering a Response payload.
+
+> **Design rationale:** Why a Response, not a Network Control message? The Request/Response path already routes an answer back to the requester's client through relays, deduplicates it, stores and forwards it under the knowledge matrix ([Section 9.10](#910-knowledge-driven-scheduling)) and ends the Request. A Network Control message is addressed to a node, not a client, and would need all of that again. On 2026-11-17 a vehicle failed to decode four Requests from a console whose definitions of those types were older, and the console heard nothing until each Request timed out.
 
 ---
