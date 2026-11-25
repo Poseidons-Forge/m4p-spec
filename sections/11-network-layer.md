@@ -120,6 +120,8 @@ Nodes MUST periodically re-broadcast their address claims to keep them active. T
 
 Both refresh `claim_renewal_timestamp` values and keep claims active.
 
+A node refreshes only the claims of the clients it hosts at the time. An application may register under different ClientUIDs over time, for example under the name of the operator signed in to a console. A ClientUID that is no longer hosted is not refreshed, so its claim expires after `expiration_interval` instead of being released.
+
 A node broadcasts NC_NODE_SUMMARY or NC_CLAIM_RENEWAL every `renewal_interval`, a network-wide configuration parameter that MUST be less than `expiration_interval`. The RECOMMENDED value is 30 minutes against a 24-hour `expiration_interval`: many renewal opportunities per lease, so a lossy link loses a lease only after a long silence.
 
 > **History:** earlier drafts recommended `expiration_interval / 2` (12 hours for a 24-hour lease). Implementations renew every `renewal_interval`, 30 minutes by default; the spec now names that parameter instead (PSFI-2358).
